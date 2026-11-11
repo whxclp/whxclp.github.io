@@ -1,0 +1,10 @@
+# 静态部署目录（GitHub Pages 从 /docs 发布）
+# 本地工具与预览服务不上传
+node_modules/
+*.log
+
+# 个人数据（本仓库为公开托管，切勿提交）
+data/
+*.secret
+.env
+.env.*
