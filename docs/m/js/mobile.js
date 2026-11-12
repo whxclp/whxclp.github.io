@@ -1201,6 +1201,128 @@
   /* 结构页的「观察」开关：加入/移出当前标的 */
   const poolNorm = (s) => String(s || '').replace(/[^0-9A-Za-z]/g, '').toUpperCase();
 
+  /* 标的联想：代码前缀 / 中文名 / 拼音首字母（东财公开联想接口，JSONP + 本地缓存，避免每次输入都打请求） */
+  const SUG_URL = 'https://searchapi.eastmoney.com/api/suggest/get';
+  const SUG_TOKEN = 'D43BF722C8E33BDC906FB84D85E326E8';
+  const SUG_LS = 'chan-sug-cache';
+  let sugCache = null;
+  let sugSeq = 0;
+
+  function sugStore() {
+    if (!sugCache) {
+      try { sugCache = JSON.parse(localStorage.getItem(SUG_LS) || '{}') || {}; } catch (e) { sugCache = {}; }
+    }
+    return sugCache;
+  }
+  function sugSave() {
+    try {
+      const ks = Object.keys(sugCache);
+      if (ks.length > 240) ks.slice(0, ks.length - 240).forEach((k) => delete sugCache[k]);
+      localStorage.setItem(SUG_LS, JSON.stringify(sugCache));
+    } catch (e) {}
+  }
+  function suggest(q) {
+    const key = q.toLowerCase();
+    const cache = sugStore();
+    if (cache[key]) return Promise.resolve(cache[key]);
+    return new Promise((resolve) => {
+      const cb = '__sug' + Math.random().toString(36).slice(2, 9);
+      const s = document.createElement('script');
+      let done = false;
+      let timer = null;
+      const finish = (rows) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        try { delete window[cb]; } catch (e) {}
+        if (s.parentNode) s.parentNode.removeChild(s);
+        if (rows.length) { cache[key] = rows; sugSave(); }
+        resolve(rows);
+      };
+      timer = setTimeout(() => finish([]), 6000);
+      window[cb] = (data) => {
+        const d = ((data || {}).QuotationCodeTable || {}).Data || [];
+        const rows = d
+          .slice(0, 15)
+          .map((it) => {
+            const code = String(it.Code || '');
+            const pre = String(it.QuoteID || '').split('.')[0];
+            const cls = String(it.Classify || '');
+            let market = { AStock: 'A', BJStock: 'A', HK: 'HK', UsStock: 'US' }[cls] || '';
+            if (!market) {
+              if (/FUND|BOND|WARRANT/i.test(cls)) market = '';
+              else if (/^\d{6}$/.test(code)) market = 'A';
+              else if (pre === '116') market = 'HK';
+              else if (/^1(05|06|07)$/.test(pre)) market = 'US';
+            }
+            return { market, code, name: String(it.Name || '').trim() };
+          })
+          .filter((x) => x.code && x.name && POOL_MK.includes(x.market))
+          .slice(0, 12);
+        finish(rows);
+      };
+      s.onerror = () => finish([]);
+      s.src = SUG_URL + '?input=' + encodeURIComponent(q) + '&type=14&count=20&token=' + SUG_TOKEN + '&cb=' + cb + '&_=' + Date.now();
+      document.head.appendChild(s);
+    });
+  }
+
+  /* 输入框 + 候选列表（防抖、忽略中文输入法拼写中的中间态、点选即回调） */
+  function bindSuggest(input, box, onPick) {
+    if (!input || !box) return;
+    let composing = false;
+    let timer = null;
+    const hide = () => { box.hidden = true; box.innerHTML = ''; };
+    input.addEventListener('compositionstart', () => { composing = true; });
+    input.addEventListener('compositionend', () => { composing = false; schedule(); });
+    input.addEventListener('blur', () => setTimeout(hide, 200));
+    input.addEventListener('input', schedule);
+    function schedule() {
+      if (composing) return;
+      clearTimeout(timer);
+      timer = setTimeout(run, 240);
+    }
+    async function run() {
+      const q = (input.value || '').trim();
+      if (!q) return hide();
+      const seq = ++sugSeq;
+      const rows = await suggest(q);
+      if (seq !== sugSeq || (input.value || '').trim() !== q) return;
+      if (!rows.length) return hide();
+      box.innerHTML = rows
+        .map(
+          (r) =>
+            `<div class="sug-item" data-m="${r.market}" data-c="${U.esc(r.code)}" data-n="${U.esc(r.name)}">
+              <span class="chip">${U.MK[r.market] || r.market}</span>
+              <span class="nm" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${U.esc(r.name)}</span>
+              <span class="cd">${U.esc(r.code)}</span>
+            </div>`
+        )
+        .join('');
+      box.hidden = false;
+      U.$$('.sug-item', box).forEach((el) =>
+        el.addEventListener('pointerdown', (ev) => {
+          ev.preventDefault();
+          hide();
+          input.blur();
+          onPick({ market: el.dataset.m, code: el.dataset.c, name: el.dataset.n });
+        })
+      );
+    }
+  }
+
+  async function addToPool(it) {
+    try {
+      const r = await API.poolAdd({ market: it.market, code: it.code, name: it.name });
+      poolMk = it.market;
+      toast('已加入观察池：' + ((r.added && r.added.name) || it.name || it.code));
+      return true;
+    } catch (e) {
+      toast(e.message);
+      return false;
+    }
+  }
+
   async function bindPoolToggle(market, code) {
     const btn = $('#sPool');
     if (!btn) return;
@@ -1273,11 +1395,14 @@
       <h1 class="page-title">观察池 <span class="hint mono">${stampHtml()}</span></h1>
       <div class="page-sub">本机浏览器保存 · 与自选池互相独立</div>
       <div class="card section">
-        <div class="section-head"><h3>加入标的</h3><span class="hint">按代码添加</span></div>
+        <div class="section-head"><h3>加入标的</h3><span class="hint">代码 / 名称 / 拼音</span></div>
         <div class="seg segmented" id="poolMk">${seg}</div>
-        <div class="form-row" style="margin-top:10px"><input class="input" id="poolCode" placeholder="代码，如 600519 / NVDA / BTCUSDT"></div>
+        <div class="form-row" style="margin-top:10px;position:relative;display:block">
+          <input class="input" id="poolCode" placeholder="600519 / 茅台 / gzmt" autocomplete="off" autocorrect="off" spellcheck="false">
+          <div class="sug-list" id="poolSug" hidden></div>
+        </div>
         <button class="btn button primary block" id="poolAdd">加入观察池</button>
-        <div class="hint" style="margin-top:8px">观察池用于跟踪暂不加入自选的标的，两套池子互不影响。</div>
+        <div class="hint" style="margin-top:8px">支持代码前缀、中文名、拼音首字母；点候选直接加入。观察池与自选池互不影响。</div>
       </div>
       <div class="section">
         <div class="section-head"><h3>${U.MK[poolMk]} · ${cur.length} 个</h3><button class="chip" id="poolRefresh">刷新</button></div>
@@ -1293,26 +1418,22 @@
     );
 
     const btn = $('#poolAdd');
+    const inp = $('#poolCode');
     if (btn) {
       btn.addEventListener('click', async () => {
-        const el = $('#poolCode');
-        const code = (el.value || '').trim();
-        if (!code) return toast('请输入代码');
+        const code = (inp.value || '').trim();
+        if (!code) return toast('请输入代码、名称或拼音首字母');
         btn.disabled = true;
-        try {
-          const r = await API.poolAdd({ market: poolMk, code });
-          toast('已加入 ' + (r.added.name || r.added.code));
-          el.value = '';
-          renderPool();
-        } catch (e) {
-          toast(e.message);
-        } finally {
-          btn.disabled = false;
-        }
+        const ok = await addToPool({ market: poolMk, code });
+        btn.disabled = false;
+        if (ok) { inp.value = ''; renderPool(); }
       });
     }
-    const inp = $('#poolCode');
-    if (inp) inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#poolAdd').click(); });
+    if (inp) inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') btn.click(); });
+    bindSuggest(inp, $('#poolSug'), async (it) => {
+      const ok = await addToPool(it);
+      if (ok) { inp.value = ''; renderPool(); }
+    });
 
     const rf = $('#poolRefresh');
     if (rf) rf.addEventListener('click', () => renderPool());

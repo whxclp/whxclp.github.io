@@ -346,3 +346,29 @@ display:flex;gap:8px;overflow-x:auto;padding:2px 2px 6px;scrollbar-width:none}
   font-size:12.5px;
   white-space:nowrap;
 }
+
+/* ---------- 标的联想候选（观察池加入） ---------- */
+.sug-list{
+  position:absolute;
+  left:0;right:0;
+  top:calc(100% + 6px);
+  z-index:30;
+  max-height:44vh;
+  overflow-y:auto;
+  -webkit-overflow-scrolling:touch;
+  background:var(--panel);
+  border:1px solid var(--line2);
+  border-radius:12px;
+  box-shadow:0 10px 26px rgba(0,0,0,.28);
+}
+.sug-item{
+  display:flex;align-items:center;gap:8px;
+  padding:10px 11px;
+  border-bottom:1px solid var(--line);
+  cursor:pointer;
+}
+.sug-item:last-child{border-bottom:0}
+.sug-item:active{background:var(--panel2)}
+.sug-item .nm{font-size:13px;font-weight:600;color:var(--text)}
+.sug-item .cd{font-size:11px;color:var(--faint);font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+
