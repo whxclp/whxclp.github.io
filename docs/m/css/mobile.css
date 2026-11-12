@@ -161,6 +161,11 @@ display:flex;gap:8px;overflow-x:auto;padding:2px 2px 6px;scrollbar-width:none}
 .pool-metrics b.down{color:var(--down)}
 .pool-right{text-align:right;min-width:66px;padding-top:1px}
 .pool-row > .chip{align-self:center}
+/* 按市场分组的长列表（与电脑版一致，不分页签） */
+.pool-group{display:flex;align-items:center;gap:6px;margin:14px 2px 6px;font-size:11.5px;font-weight:650;color:var(--muted)}
+.pool-group:first-child{margin-top:0}
+.pool-group em{font-style:normal;font-weight:500;color:var(--faint);font-family:ui-monospace,Menlo,monospace}
+.pool-mk-sel{flex:0 0 92px;width:92px;min-width:92px;padding-left:10px;padding-right:2px}
 .badge{font-size:10px;padding:2px 7px;border-radius:6px;font-weight:600;white-space:nowrap}
 .badge.buy{background:var(--down-tint);color:var(--down-text);border:1px solid var(--down-tint)}
 .badge.sell{background:var(--up-tint);color:var(--up-text);border:1px solid var(--up-tint)}

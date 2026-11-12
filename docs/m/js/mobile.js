@@ -1372,7 +1372,6 @@
 
   async function renderPool() {
     const data = (await API.pool()).list || {};
-    const cur = data[poolMk] || [];
     const qmap = {};
     const all = [];
     POOL_MK.forEach((m) => (data[m] || []).forEach((it) => all.push({ market: m, ...it })));
@@ -1385,24 +1384,21 @@
     if (stale('pool')) return;
 
     const total = POOL_MK.reduce((n, m) => n + (data[m] || []).length, 0);
-    const seg = POOL_MK.map(
-      (m) => `<button class="sq button ${m === poolMk ? 'active' : ''}" data-m="${m}">${U.MK[m]} ${(data[m] || []).length}</button>`
-    ).join('');
+    const mkOpts = POOL_MK.map((m) => `<option value="${m}"${m === poolMk ? ' selected' : ''}>${U.MK[m]}</option>`).join('');
 
-    const rows = cur
-      .map((it) => {
-        const q = qmap[poolMk + ':' + it.code] || {};
-        const price = q.price != null && Number(q.price) > 0 ? Number(q.price) : null;
-        const cost = it.cost != null && isFinite(Number(it.cost)) ? Number(it.cost) : null;
-        const hasCost = cost != null && cost > 0;
-        const pnl = hasCost && price != null ? ((price - cost) / cost) * 100 : null;
-        const pct = q.pct != null && isFinite(Number(q.pct)) ? Number(q.pct) : null;
-        const chg = q.change != null && isFinite(Number(q.change)) ? Number(q.change) : null;
-        const vol = q.volume != null && Number(q.volume) > 0 ? Number(q.volume) : null;
-        const volTxt = vol != null ? (vol >= 10000 ? (vol / 10000).toFixed(1) + '万手' : vol + '手') : '—';
-        return `<div class="list-item pool-row" data-m="${poolMk}" data-c="${U.esc(it.code)}" data-name="${U.esc(it.name)}">
+    const rowHtml = (m, it) => {
+      const q = qmap[m + ':' + it.code] || {};
+      const price = q.price != null && Number(q.price) > 0 ? Number(q.price) : null;
+      const cost = it.cost != null && isFinite(Number(it.cost)) ? Number(it.cost) : null;
+      const hasCost = cost != null && cost > 0;
+      const pnl = hasCost && price != null ? ((price - cost) / cost) * 100 : null;
+      const pct = q.pct != null && isFinite(Number(q.pct)) ? Number(q.pct) : null;
+      const chg = q.change != null && isFinite(Number(q.change)) ? Number(q.change) : null;
+      const vol = q.volume != null && Number(q.volume) > 0 ? Number(q.volume) : null;
+      const volTxt = vol != null ? (vol >= 10000 ? (vol / 10000).toFixed(1) + '万手' : vol + '手') : '—';
+      return `<div class="list-item pool-row" data-m="${m}" data-c="${U.esc(it.code)}" data-name="${U.esc(it.name)}">
         <div class="mid">
-          <div class="pool-head"><span class="nm">${U.esc(it.name)}</span><span class="chip">${U.MK[poolMk]}</span></div>
+          <div class="pool-head"><span class="nm">${U.esc(it.name)}</span><span class="chip">${U.MK[m]}</span></div>
           <div class="cd">${U.esc(it.code)}</div>
           <div class="pool-metrics">
             <span>涨跌额 <b class="${U.cls(chg)}">${chg != null ? (chg > 0 ? '+' : '') + chg.toFixed(2) : '—'}</b></span>
@@ -1417,7 +1413,14 @@
         </div>
         <button class="chip" data-act="more">⋯</button>
       </div>`;
-      })
+    };
+
+    // 与电脑版一致：不分页签，按市场分组连续列出
+    const groups = POOL_MK.filter((m) => (data[m] || []).length)
+      .map(
+        (m) => `<div class="pool-group"><span>${U.MK[m]}</span><em>${data[m].length}</em></div>
+        <div class="list">${data[m].map((it) => rowHtml(m, it)).join('')}</div>`
+      )
       .join('');
 
     view.innerHTML = `
@@ -1425,26 +1428,24 @@
       <div class="page-sub">共 ${total} 只 · 本机浏览器保存 · 与自选池互相独立</div>
       <div class="card section">
         <div class="section-head"><h3>加入标的</h3><span class="hint">代码 / 名称 / 拼音</span></div>
-        <div class="seg segmented" id="poolMk">${seg}</div>
-        <div class="form-row" style="margin-top:10px;position:relative;display:block">
-          <input class="input" id="poolCode" placeholder="600519 / 茅台 / gzmt" autocomplete="off" autocorrect="off" spellcheck="false">
-          <div class="sug-list" id="poolSug" hidden></div>
+        <div class="form-row" style="margin-top:10px;display:flex;gap:8px;align-items:center">
+          <select class="input pool-mk-sel" id="poolMkSel" aria-label="选择市场">${mkOpts}</select>
+          <div style="flex:1;min-width:0;position:relative">
+            <input class="input" id="poolCode" placeholder="600519 / 茅台 / gzmt" autocomplete="off" autocorrect="off" spellcheck="false">
+            <div class="sug-list" id="poolSug" hidden></div>
+          </div>
         </div>
         <button class="btn button primary block" id="poolAdd">加入观察池</button>
         <div class="hint" style="margin-top:8px">支持代码前缀、中文名、拼音首字母；点候选直接加入。观察池与自选池互不影响。</div>
       </div>
       <div class="section">
-        <div class="section-head"><h3>${U.MK[poolMk]} · ${cur.length} 个</h3><button class="chip" id="poolRefresh">刷新</button></div>
-        <div class="list" id="poolList">${rows || '<div class="empty">该市场观察池为空</div>'}</div>
+        <div class="section-head"><h3>观察池 · ${total} 个</h3><button class="chip" id="poolRefresh">刷新</button></div>
+        <div id="poolList">${groups || '<div class="empty">观察池还是空的 —— 在上方搜索并添加你的第一批标的</div>'}</div>
       </div>
       <div class="hint" style="text-align:center;padding:6px 0 20px">点标的进入结构分析 · 点 ⋯ 设置成本或移出</div>`;
 
-    U.$$('#poolMk .sq').forEach((b) =>
-      b.addEventListener('click', () => {
-        poolMk = b.dataset.m;
-        renderPool();
-      })
-    );
+    const mkSel = $('#poolMkSel');
+    if (mkSel) mkSel.addEventListener('change', () => { poolMk = mkSel.value; });
 
     const btn = $('#poolAdd');
     const inp = $('#poolCode');
