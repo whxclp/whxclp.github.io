@@ -86,7 +86,7 @@
 
   /* ---------------- 路由 ---------------- */
   async function go(tab, opts) {
-    if (!['overview', 'radar', 'structure', 'theory', 'divination'].includes(tab)) tab = 'overview';
+    if (!['overview', 'radar', 'pool', 'structure', 'theory', 'divination'].includes(tab)) tab = 'overview';
     if (state.tab === 'divination' && tab !== 'divination') {
       clearInterval(state.div && state.div.timer);
       if (state.div) { state.div.timer = null; state.div.live = false; }
@@ -95,7 +95,7 @@
     const token = (state.renderToken = (state.renderToken || 0) + 1);
     state.tab = tab;
     U.$$('#tabbar .tab').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
-    $('#appTitle').textContent = { overview: '总览', radar: '买卖点雷达', structure: '结构分析', theory: '缠论理论', divination: '算卦择时' }[tab];
+    $('#appTitle').textContent = { overview: '总览', radar: '买卖点雷达', pool: '观察池', structure: '结构分析', theory: '缠论理论', divination: '算卦择时' }[tab];
     if (!(opts && opts.silent)) {
       const q = `?tab=${tab}${location.search.includes('skin=') ? '&skin=' + document.documentElement.dataset.skin : ''}#${tab}`;
       try { history.pushState({ tab }, '', q); } catch (e) { history.replaceState(null, '', q); }
@@ -106,6 +106,7 @@
     try {
       if (tab === 'overview') await renderOverview();
       else if (tab === 'radar') await renderRadar();
+      else if (tab === 'pool') await renderPool();
       else if (tab === 'structure') await renderStructure();
       else if (tab === 'theory') renderTheory();
       else await renderDivination();
@@ -525,7 +526,10 @@
     const periods = PERIODS[market];
     view.innerHTML = `
       <h1 class="page-title">结构分析 ${stampHtml()}</h1>
-      <div class="page-sub">${U.MK[market]} · ${U.esc(code)} · ${PNAME[state.period]}</div>
+      <div class="page-sub" style="display:flex;align-items:center;gap:8px">
+        <span>${U.MK[market]} · ${U.esc(code)} · ${PNAME[state.period]}</span>
+        <button class="chip" id="sPool" style="margin-left:auto">观察池</button>
+      </div>
       <div class="section">
         <div class="seg segmented" id="sMarket">
           ${['A', 'HK', 'US', 'CR', 'CNF', 'USF'].map((m) => `<button class="sq button ${m === market ? 'active' : ''}" data-m="${m}">${U.MK[m]}</button>`).join('')}
@@ -591,6 +595,7 @@
     );
     const ss = $('#sSearch');
     if (ss) ss.addEventListener('click', openSearch);
+    bindPoolToggle(market, code);
     U.$$('#sPeriod .sq').forEach((b) =>
       b.addEventListener('click', () => {
         state.period = b.dataset.p;
@@ -1184,6 +1189,188 @@
     );
   }
 
+  /* ---------------- 观察池 ----------------
+   * 与桌面版同源：数据存在 localStorage 的 chan-pool，结构为 {市场:[{code,name,cost}]}，
+   * 与自选池（chan-watchlist）完全独立，同一浏览器下 PC 与手机版共用同一份观察池。
+   * 桌面版能力对齐：按市场分组、加入、移出、设置成本看浮动盈亏、点标的进结构分析。
+   * 桌面版没有排序和「批量看雷达」，这里也不额外添加。
+   */
+  const POOL_MK = ['A', 'HK', 'US', 'CR', 'CNF', 'USF'];
+  let poolMk = 'A';
+
+  /* 结构页的「观察」开关：加入/移出当前标的 */
+  const poolNorm = (s) => String(s || '').replace(/[^0-9A-Za-z]/g, '').toUpperCase();
+
+  async function bindPoolToggle(market, code) {
+    const btn = $('#sPool');
+    if (!btn) return;
+    const sync = async () => {
+      try {
+        const data = (await API.pool()).list || {};
+        const has = (data[market] || []).some((x) => poolNorm(x.code) === poolNorm(code));
+        btn.dataset.has = has ? '1' : '0';
+        btn.classList.toggle('gold', has);
+        btn.textContent = has ? '★ 已观察' : '＋ 观察';
+      } catch (e) {}
+    };
+    btn.addEventListener('click', async () => {
+      const has = btn.dataset.has === '1';
+      btn.disabled = true;
+      try {
+        if (has) {
+          await API.poolDel({ market, code });
+          toast('已移出观察池');
+        } else {
+          const r = await API.poolAdd({ market, code });
+          poolMk = market;
+          toast('已加入观察池：' + ((r.added && r.added.name) || code));
+        }
+      } catch (e) {
+        toast(e.message);
+      } finally {
+        btn.disabled = false;
+        sync();
+      }
+    });
+    sync();
+  }
+
+  async function renderPool() {
+    const data = (await API.pool()).list || {};
+    const cur = data[poolMk] || [];
+    const qmap = {};
+    const all = [];
+    POOL_MK.forEach((m) => (data[m] || []).forEach((it) => all.push({ market: m, ...it })));
+    if (all.length) {
+      try {
+        const r = await API.get('/api/quote', { list: all.map((i) => i.market + ':' + i.code).join(',') });
+        (r.quotes || []).forEach((q) => (qmap[q.market + ':' + q.code] = q));
+      } catch (e) {}
+    }
+    if (stale('pool')) return;
+
+    const seg = POOL_MK.map(
+      (m) => `<button class="sq button ${m === poolMk ? 'active' : ''}" data-m="${m}">${U.MK[m]} ${(data[m] || []).length}</button>`
+    ).join('');
+
+    const rows = cur
+      .map((it) => {
+        const q = qmap[poolMk + ':' + it.code] || {};
+        const cost = Number(it.cost);
+        const hasCost = Number.isFinite(cost) && cost > 0;
+        const pnl = hasCost && q.price ? ((q.price - cost) / cost) * 100 : null;
+        return `<div class="list-item" data-m="${poolMk}" data-c="${U.esc(it.code)}" data-name="${U.esc(it.name)}">
+        <div class="mid"><div class="nm">${U.esc(it.name)}</div>
+          <div class="cd">${U.esc(it.code)}${hasCost ? ' · 成本 ' + U.fmt(cost, 3) : ' · 未设成本'}</div></div>
+        <div><div class="px ${U.cls(q.pct)}">${q.price ? U.fmt(q.price) : '—'}</div>
+          <div class="dt ${U.cls(pnl != null ? pnl : q.pct)}">${pnl != null ? '盈亏 ' + U.pct(pnl) : U.pct(q.pct)}</div></div>
+        <button class="chip" data-act="more">⋯</button>
+      </div>`;
+      })
+      .join('');
+
+    view.innerHTML = `
+      <h1 class="page-title">观察池 <span class="hint mono">${stampHtml()}</span></h1>
+      <div class="page-sub">本机浏览器保存 · 与自选池互相独立</div>
+      <div class="card section">
+        <div class="section-head"><h3>加入标的</h3><span class="hint">按代码添加</span></div>
+        <div class="seg segmented" id="poolMk">${seg}</div>
+        <div class="form-row" style="margin-top:10px"><input class="input" id="poolCode" placeholder="代码，如 600519 / NVDA / BTCUSDT"></div>
+        <button class="btn button primary block" id="poolAdd">加入观察池</button>
+        <div class="hint" style="margin-top:8px">观察池用于跟踪暂不加入自选的标的，两套池子互不影响。</div>
+      </div>
+      <div class="section">
+        <div class="section-head"><h3>${U.MK[poolMk]} · ${cur.length} 个</h3><button class="chip" id="poolRefresh">刷新</button></div>
+        <div class="list" id="poolList">${rows || '<div class="empty">该市场观察池为空</div>'}</div>
+      </div>
+      <div class="hint" style="text-align:center;padding:6px 0 20px">点标的进入结构分析 · 点 ⋯ 设置成本或移出</div>`;
+
+    U.$$('#poolMk .sq').forEach((b) =>
+      b.addEventListener('click', () => {
+        poolMk = b.dataset.m;
+        renderPool();
+      })
+    );
+
+    const btn = $('#poolAdd');
+    if (btn) {
+      btn.addEventListener('click', async () => {
+        const el = $('#poolCode');
+        const code = (el.value || '').trim();
+        if (!code) return toast('请输入代码');
+        btn.disabled = true;
+        try {
+          const r = await API.poolAdd({ market: poolMk, code });
+          toast('已加入 ' + (r.added.name || r.added.code));
+          el.value = '';
+          renderPool();
+        } catch (e) {
+          toast(e.message);
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    }
+    const inp = $('#poolCode');
+    if (inp) inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#poolAdd').click(); });
+
+    const rf = $('#poolRefresh');
+    if (rf) rf.addEventListener('click', () => renderPool());
+
+    U.$$('#poolList .list-item[data-c]').forEach((row) => {
+      row.addEventListener('click', (e) => {
+        if (e.target.closest('[data-act]')) return;
+        openStructure(row.dataset.m, row.dataset.c);
+      });
+      const more = row.querySelector('[data-act="more"]');
+      if (more)
+        more.addEventListener('click', (e) => {
+          e.stopPropagation();
+          openPoolItem(row.dataset.m, row.dataset.c, row.dataset.name);
+        });
+    });
+  }
+
+  async function openPoolItem(market, code, name) {
+    let cost = '';
+    try {
+      const data = (await API.pool()).list || {};
+      const it = (data[market] || []).find((x) => poolNorm(x.code) === poolNorm(code));
+      if (it && it.cost != null) cost = it.cost;
+    } catch (e) {}
+    openSheet(
+      name || code,
+      `<div class="section-head"><h3>${U.esc(code)}</h3><span class="hint">${U.MK[market]}</span></div>
+       <div class="form-row" style="margin-top:12px"><input class="input" id="pcCost" type="number" step="0.001" inputmode="decimal" placeholder="成本价，留空表示清除" value="${cost}"></div>
+       <button class="btn button primary block" id="pcSave">保存成本</button>
+       <button class="btn button block" id="pcDel" style="margin-top:10px;color:var(--up-text)">移出观察池</button>
+       <div class="hint" style="margin-top:10px">成本只保存在本机浏览器，用于计算浮动盈亏。</div>`,
+      () => {
+        $('#pcSave').addEventListener('click', async () => {
+          const raw = ($('#pcCost').value || '').trim();
+          try {
+            await API.poolCost({ market, code, cost: raw === '' ? null : Number(raw) });
+            toast(raw === '' ? '已清除成本' : '已保存成本');
+            closeSheet();
+            renderPool();
+          } catch (e) {
+            toast(e.message);
+          }
+        });
+        $('#pcDel').addEventListener('click', async () => {
+          try {
+            await API.poolDel({ market, code });
+            toast('已移出观察池');
+            closeSheet();
+            renderPool();
+          } catch (e) {
+            toast(e.message);
+          }
+        });
+      }
+    );
+  }
+
   /* ---------------- 实时 ---------------- */
   function setLive(on) {
     state.live = on;
@@ -1284,6 +1471,7 @@
           if (state.tab === 'overview') { const ov = await API.overview(); patchOverview(ov); await renderOverview(); }
           else if (state.tab === 'radar') await renderRadar();
           else if (state.tab === 'structure') await renderStructure();
+          else if (state.tab === 'pool') await renderPool();
           else if (state.tab === 'divination') await renderDivination();
           else renderTheory();
           toast('已刷新');

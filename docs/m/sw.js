@@ -2,7 +2,7 @@
    策略：导航（HTML）网络优先 —— 保证部署后立刻拿到新外壳；
        带 ?v= 的代码资源视为不可变，缓存优先；
        其余静态资源缓存优先 + 后台更新。 */
-const VER = 'chan-m-v3';
+const VER = 'chan-m-v4';
 const CORE = ['/m/', '/icons/icon-192.png', '/manifest.webmanifest'];
 
 self.addEventListener('install', (e) => {

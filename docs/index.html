@@ -470,7 +470,7 @@
     var ua = navigator.userAgent || '';
     if (!/Android|iPhone|iPod|iPad|Mobile|HarmonyOS|MicroMessenger/i.test(ua)) return;
     if (/[?&]desktop=1/.test(location.search)) return;
-    var map = { overview:'overview', structure:'structure', radar:'radar', theory:'theory', divination:'divination' };
+    var map = { overview:'overview', structure:'structure', radar:'radar', pool:'pool', theory:'theory', divination:'divination' };
     var h = location.hash.replace('#','');
     var p = new URLSearchParams(location.search);
     p.delete('desktop');
