@@ -241,13 +241,16 @@ display:flex;gap:8px;overflow-x:auto;padding:2px 2px 6px;scrollbar-width:none}
 
 /* 弹层 */
 .sheet-mask{
-  position:fixed;inset:0;z-index:60;background:rgba(0,0,0,.5);
+  position:fixed;left:0;right:0;top:var(--vv-top,0px);bottom:var(--kb,0px);z-index:60;background:rgba(0,0,0,.5);
   display:none;align-items:flex-end;justify-content:center;
   backdrop-filter:blur(2px);
 }
 .sheet-mask.show{display:flex}
+/* 居中弹层：配合 --kb 让输入框在软键盘上方 */
+.sheet-mask.center{align-items:center;padding:12px}
+.sheet-mask.center .sheet{border-radius:20px;border:1px solid var(--line2);max-height:100%}
 .sheet{
-  width:100%;max-width:620px;max-height:86vh;overflow-y:auto;
+  width:100%;max-width:620px;max-height:86%;overflow-y:auto;
   background:var(--panel);border-radius:20px 20px 0 0;
   padding:14px 14px calc(14px + var(--safe-b));
   animation:up .22s cubic-bezier(.2,.8,.3,1);

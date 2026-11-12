@@ -996,12 +996,37 @@
   }
 
   /* ---------------- 弹层 ---------------- */
-  function openSheet(title, html, after) {
+  /* 软键盘弹出时 iOS 不改变布局视口，用 visualViewport 把弹层限制在可见区域内 */
+  function syncSheetViewport() {
+    const vv = window.visualViewport;
+    const top = vv ? Math.max(0, Math.round(vv.offsetTop)) : 0;
+    const kb = vv ? Math.max(0, Math.round((window.innerHeight || 0) - (vv.height + vv.offsetTop))) : 0;
+    const de = document.documentElement;
+    de.style.setProperty('--vv-top', top + 'px');
+    de.style.setProperty('--kb', kb + 'px');
+  }
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', syncSheetViewport);
+    window.visualViewport.addEventListener('scroll', syncSheetViewport);
+  }
+  window.addEventListener('resize', syncSheetViewport);
+  window.addEventListener('orientationchange', syncSheetViewport);
+
+  function openSheet(title, html, after, opts) {
     const mask = $('#sheetMask');
     const sheet = $('#sheet');
     sheet.innerHTML = `<div class="sheet-head"><h3>${U.esc(title)}</h3><button class="sheet-close" id="sheetClose" aria-label="关闭"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>${html}`;
+    mask.classList.toggle('center', !!(opts && opts.center));
     mask.classList.add('show');
     document.documentElement.classList.add('sheet-open');
+    syncSheetViewport();
+    sheet.onfocusin = (e) => {
+      const t = e.target;
+      if (!t || !t.matches || !t.matches('input, textarea, select')) return;
+      setTimeout(() => {
+        try { t.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (err) {}
+      }, 280);
+    };
     const close = () => closeSheet();
     $('#sheetClose').addEventListener('click', close);
     mask.onclick = (e) => {
@@ -1010,8 +1035,12 @@
     if (after) after();
   }
   function closeSheet() {
-    $('#sheetMask').classList.remove('show');
+    const mask = $('#sheetMask');
+    mask.classList.remove('show');
+    mask.classList.remove('center');
     document.documentElement.classList.remove('sheet-open');
+    document.documentElement.style.setProperty('--vv-top', '0px');
+    document.documentElement.style.setProperty('--kb', '0px');
   }
 
   async function openSearch() {
@@ -1209,6 +1238,8 @@
    * 桌面版没有排序和「批量看雷达」，这里也不额外添加。
    */
   const POOL_MK = ['A', 'HK', 'US', 'CR', 'CNF', 'USF'];
+  // 持仓盈亏金额的计价货币（持仓数量单位：股/份/张/币）
+  const POOL_CUR = { A: '¥', HK: 'HK$', US: '$', CR: 'USDT ', CNF: '¥', USF: '$' };
   let poolMk = 'A';
 
   /* 结构页的「观察」开关：加入/移出当前标的 */
@@ -1391,7 +1422,11 @@
       const price = q.price != null && Number(q.price) > 0 ? Number(q.price) : null;
       const cost = it.cost != null && isFinite(Number(it.cost)) ? Number(it.cost) : null;
       const hasCost = cost != null && cost > 0;
+      const qty = it.qty != null && isFinite(Number(it.qty)) && Number(it.qty) > 0 ? Number(it.qty) : null;
       const pnl = hasCost && price != null ? ((price - cost) / cost) * 100 : null;
+      // 持仓盈亏金额 =（现价 − 成本价）× 持仓数量；未填持仓时只显示百分比
+      const amt = hasCost && qty != null && price != null ? (price - cost) * qty : null;
+      const amtTxt = amt != null ? (amt < 0 ? '-' : '+') + POOL_CUR[m] + U.fmt(Math.abs(amt), 2) : '';
       const pct = q.pct != null && isFinite(Number(q.pct)) ? Number(q.pct) : null;
       const chg = q.change != null && isFinite(Number(q.change)) ? Number(q.change) : null;
       const vol = q.volume != null && Number(q.volume) > 0 ? Number(q.volume) : null;
@@ -1404,12 +1439,14 @@
             <span>涨跌额 <b class="${U.cls(chg)}">${chg != null ? (chg > 0 ? '+' : '') + chg.toFixed(2) : '—'}</b></span>
             <span>成交量 <b>${volTxt}</b></span>
             <span>成本 <b>${hasCost ? U.fmt(cost) : '未设'}</b></span>
+            <span>持仓 <b>${qty != null ? U.fmt(qty, 0) : '未设'}</b></span>
             <span>持仓盈亏 <b class="${U.cls(pnl)}">${pnl != null ? U.pct(pnl) : '—'}</b></span>
           </div>
         </div>
         <div class="pool-right">
           <div class="px ${U.cls(pct)}">${price != null ? U.fmt(price) : '—'}</div>
           <div class="dt ${U.cls(pct)}">${pct != null ? U.pct(pct) : '—'}</div>
+          ${amt != null ? `<div class="dt ${U.cls(amt)}">${amtTxt}</div>` : ''}
         </div>
         <button class="chip" data-act="more">⋯</button>
       </div>`;
@@ -1484,24 +1521,39 @@
 
   async function openPoolItem(market, code, name) {
     let cost = '';
+    let qty = '';
     try {
       const data = (await API.pool()).list || {};
       const it = (data[market] || []).find((x) => poolNorm(x.code) === poolNorm(code));
       if (it && it.cost != null) cost = it.cost;
+      if (it && it.qty != null) qty = it.qty;
     } catch (e) {}
     openSheet(
       name || code,
       `<div class="section-head"><h3>${U.esc(code)}</h3><span class="hint">${U.MK[market]}</span></div>
-       <div class="form-row" style="margin-top:12px"><input class="input" id="pcCost" type="number" step="any" min="0" inputmode="decimal" placeholder="成本价，留空表示清除" value="${cost}"></div>
-       <button class="btn button primary block" id="pcSave">保存成本</button>
+       <div class="form-row" style="margin-top:12px">
+         <div class="hint" style="margin-bottom:4px">成本价（${POOL_CUR[market].trim()}）</div>
+         <input class="input" id="pcCost" type="number" step="any" min="0" inputmode="decimal" placeholder="留空表示清除" value="${cost}">
+       </div>
+       <div class="form-row">
+         <div class="hint" style="margin-bottom:4px">持仓数量（股/份/张/币）</div>
+         <input class="input" id="pcQty" type="number" step="any" min="0" inputmode="decimal" placeholder="留空只算盈亏百分比" value="${qty}">
+       </div>
+       <button class="btn button primary block" id="pcSave">保存</button>
        <button class="btn button block" id="pcDel" style="margin-top:10px;color:var(--up-text)">移出观察池</button>
-       <div class="hint" style="margin-top:10px">成本只保存在本机浏览器，用于计算浮动盈亏。</div>`,
+       <div class="hint" style="margin-top:10px">盈亏金额 =（现价 − 成本价）× 持仓数量，按该市场计价货币显示；成本与持仓只保存在本机浏览器。</div>`,
       () => {
         $('#pcSave').addEventListener('click', async () => {
           const raw = ($('#pcCost').value || '').trim();
+          const rawQty = ($('#pcQty').value || '').trim();
           try {
-            await API.poolCost({ market, code, cost: raw === '' ? null : Number(raw) });
-            toast(raw === '' ? '已清除成本价' : '已保存成本价：' + raw);
+            await API.poolCost({
+              market,
+              code,
+              cost: raw === '' ? null : Number(raw),
+              qty: rawQty === '' ? null : Number(rawQty),
+            });
+            toast(raw === '' && rawQty === '' ? '已清除成本与持仓' : '已保存成本与持仓');
             closeSheet();
             renderPool();
           } catch (e) {
@@ -1518,7 +1570,8 @@
             toast(e.message);
           }
         });
-      }
+      },
+      { center: true }
     );
   }
 

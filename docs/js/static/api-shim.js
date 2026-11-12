@@ -141,6 +141,7 @@
       for (const it of POOL[m]) {
         const hit = byCode.get(it.code);
         if (hit && hit.cost != null && isFinite(Number(hit.cost))) it.cost = Number(hit.cost);
+        if (hit && hit.qty != null && isFinite(Number(hit.qty)) && Number(hit.qty) > 0) it.qty = Number(hit.qty);
       }
     }
     return POOL;
@@ -571,14 +572,32 @@
       const item = (pool[market] || []).find((x) => x.code === norm);
       if (!item) throw new Error('该标的不在观察池中');
       const raw = body.cost;
-      if (raw === null || raw === '' || raw === undefined) delete item.cost;
-      else {
-        const n = Number(raw);
-        if (!Number.isFinite(n) || n <= 0) throw new Error('成本价需为正数，留空则清除');
-        item.cost = n;
+      const hasQty = Object.prototype.hasOwnProperty.call(body, 'qty');
+      let costN = null;
+      let qtyN = null;
+      if (raw !== null && raw !== '' && raw !== undefined) {
+        costN = Number(raw);
+        if (!Number.isFinite(costN) || costN <= 0) throw new Error('成本价需为正数，留空则清除');
+      }
+      if (hasQty) {
+        const rq = body.qty;
+        if (rq !== null && rq !== '' && rq !== undefined) {
+          qtyN = Number(rq);
+          if (!Number.isFinite(qtyN) || qtyN <= 0) throw new Error('持仓数量需为正数，留空则清除');
+        }
+      }
+      if (costN == null) delete item.cost;
+      else item.cost = costN;
+      if (hasQty) {
+        if (qtyN == null) delete item.qty;
+        else item.qty = qtyN;
       }
       savePool();
-      return { ok: true, list: pool, updated: { market, code: norm, cost: item.cost != null ? item.cost : null } };
+      return {
+        ok: true,
+        list: pool,
+        updated: { market, code: norm, cost: item.cost != null ? item.cost : null, qty: item.qty != null ? item.qty : null },
+      };
     }
 
     if (path === '/api/drawings') {
