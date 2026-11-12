@@ -153,6 +153,7 @@ display:flex;gap:8px;overflow-x:auto;padding:2px 2px 6px;scrollbar-width:none}
 /* 观察池行：与电脑版字段一致（涨跌额/成交量/成本/持仓盈亏） */
 .pool-row{align-items:flex-start}
 .pool-head{display:flex;align-items:center;gap:6px;margin-bottom:1px}
+.pool-head .chip{flex:0 0 auto}
 .pool-head .nm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pool-metrics{display:flex;flex-wrap:wrap;gap:3px 10px;margin-top:4px;font-size:10.5px;color:var(--faint);font-family:ui-monospace,Menlo,monospace}
 .pool-metrics b{font-weight:600;color:var(--muted)}
