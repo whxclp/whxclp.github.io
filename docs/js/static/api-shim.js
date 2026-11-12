@@ -107,18 +107,40 @@
   }
   const saveWatchlist = () => lsSet(LS_KEY.watchlist, WL);
 
+  const emptyPool = () => ({ A: [], HK: [], US: [], CR: [], CNF: [], USF: [] });
+
+  /* 旧版本可能把观察池存成扁平数组 [{market,code,name,cost}]，转成按市场分组 */
+  function poolFromFlatArray(arr) {
+    const out = emptyPool();
+    for (const it of arr) {
+      if (!it || it.code == null) continue;
+      const m = String(it.market || 'A').toUpperCase();
+      if (!out[m]) continue;
+      out[m].push(it);
+    }
+    return out;
+  }
+
   let POOL = null;
   function loadPool() {
     if (POOL) return POOL;
     const raw = lsGet(LS_KEY.pool, null);
-    POOL = raw ? normalizeWatchlist(raw) : { A: [], HK: [], US: [], CR: [], CNF: [], USF: [] };
-    if (raw) {
-      for (const m of Object.keys(POOL)) {
-        const src = Array.isArray(raw[m]) ? raw[m] : [];
-        for (const it of POOL[m]) {
-          const hit = src.find((x) => x && String(x.code) === String(it.code));
-          if (hit && hit.cost != null && isFinite(Number(hit.cost))) it.cost = Number(hit.cost);
-        }
+    if (!raw) { POOL = emptyPool(); return POOL; }
+    const src = Array.isArray(raw) ? poolFromFlatArray(raw) : raw;
+    POOL = normalizeWatchlist(src);
+    // 归一化会丢 cost 等扩展字段，按「归一化后的代码」从原始数据回填；
+    // 旧数据可能存的是 sh600519 / 600519.SH 这类写法，不能只做字符串相等比较。
+    for (const m of ALL_MK) {
+      const list = Array.isArray(src[m]) ? src[m] : [];
+      const byCode = new Map();
+      for (const x of list) {
+        if (!x || x.code == null) continue;
+        const c = S.normCode(m, x.code);
+        if (c && !byCode.has(c)) byCode.set(c, x);
+      }
+      for (const it of POOL[m]) {
+        const hit = byCode.get(it.code);
+        if (hit && hit.cost != null && isFinite(Number(hit.cost))) it.cost = Number(hit.cost);
       }
     }
     return POOL;

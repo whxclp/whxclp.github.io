@@ -150,6 +150,16 @@ display:flex;gap:8px;overflow-x:auto;padding:2px 2px 6px;scrollbar-width:none}
 .list-item .mid{flex:1;min-width:0}
 .list-item .px{text-align:right;font-family:ui-monospace,Menlo,monospace;font-size:13px}
 .list-item .dt{text-align:right;font-size:10.5px;color:var(--faint)}
+/* 观察池行：与电脑版字段一致（涨跌额/成交量/成本/持仓盈亏） */
+.pool-row{align-items:flex-start}
+.pool-head{display:flex;align-items:center;gap:6px;margin-bottom:1px}
+.pool-head .nm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pool-metrics{display:flex;flex-wrap:wrap;gap:3px 10px;margin-top:4px;font-size:10.5px;color:var(--faint);font-family:ui-monospace,Menlo,monospace}
+.pool-metrics b{font-weight:600;color:var(--muted)}
+.pool-metrics b.up{color:var(--up)}
+.pool-metrics b.down{color:var(--down)}
+.pool-right{text-align:right;min-width:66px;padding-top:1px}
+.pool-row > .chip{align-self:center}
 .badge{font-size:10px;padding:2px 7px;border-radius:6px;font-weight:600;white-space:nowrap}
 .badge.buy{background:var(--down-tint);color:var(--down-text);border:1px solid var(--down-tint)}
 .badge.sell{background:var(--up-tint);color:var(--up-text);border:1px solid var(--up-tint)}

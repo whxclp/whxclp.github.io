@@ -520,6 +520,18 @@
     go('structure');
   }
 
+  /* 与电脑版一致：结构图上按观察池里该标的的成本价画成本线 */
+  async function applyPoolCost(market, code) {
+    if (!state.chart) return;
+    try {
+      const p = await API.pool();
+      const item = ((p.list && p.list[market]) || []).find((x) => poolNorm(x.code) === poolNorm(code));
+      state.chart.setCost(item && item.cost != null ? Number(item.cost) : null);
+    } catch (e) {
+      state.chart.setCost(null);
+    }
+  }
+
   async function renderStructure() {
     const market = state.market;
     const code = state.symbol[market];
@@ -622,6 +634,7 @@
       state.lastChan = res;
       state.chart.setData(res);
       loadDrawings(); // 图表实例每次重建，必须重新载入，否则已有线会消失并被"1 条"覆盖保存
+      applyPoolCost(market, code);
       paintStructure(res);
       loadMobileBacktest(market, code, state.period);
     } catch (e) {
@@ -1371,6 +1384,7 @@
     }
     if (stale('pool')) return;
 
+    const total = POOL_MK.reduce((n, m) => n + (data[m] || []).length, 0);
     const seg = POOL_MK.map(
       (m) => `<button class="sq button ${m === poolMk ? 'active' : ''}" data-m="${m}">${U.MK[m]} ${(data[m] || []).length}</button>`
     ).join('');
@@ -1378,14 +1392,29 @@
     const rows = cur
       .map((it) => {
         const q = qmap[poolMk + ':' + it.code] || {};
-        const cost = Number(it.cost);
-        const hasCost = Number.isFinite(cost) && cost > 0;
-        const pnl = hasCost && q.price ? ((q.price - cost) / cost) * 100 : null;
-        return `<div class="list-item" data-m="${poolMk}" data-c="${U.esc(it.code)}" data-name="${U.esc(it.name)}">
-        <div class="mid"><div class="nm">${U.esc(it.name)}</div>
-          <div class="cd">${U.esc(it.code)}${hasCost ? ' · 成本 ' + U.fmt(cost, 3) : ' · 未设成本'}</div></div>
-        <div><div class="px ${U.cls(q.pct)}">${q.price ? U.fmt(q.price) : '—'}</div>
-          <div class="dt ${U.cls(pnl != null ? pnl : q.pct)}">${pnl != null ? '盈亏 ' + U.pct(pnl) : U.pct(q.pct)}</div></div>
+        const price = q.price != null && Number(q.price) > 0 ? Number(q.price) : null;
+        const cost = it.cost != null && isFinite(Number(it.cost)) ? Number(it.cost) : null;
+        const hasCost = cost != null && cost > 0;
+        const pnl = hasCost && price != null ? ((price - cost) / cost) * 100 : null;
+        const pct = q.pct != null && isFinite(Number(q.pct)) ? Number(q.pct) : null;
+        const chg = q.change != null && isFinite(Number(q.change)) ? Number(q.change) : null;
+        const vol = q.volume != null && Number(q.volume) > 0 ? Number(q.volume) : null;
+        const volTxt = vol != null ? (vol >= 10000 ? (vol / 10000).toFixed(1) + '万手' : vol + '手') : '—';
+        return `<div class="list-item pool-row" data-m="${poolMk}" data-c="${U.esc(it.code)}" data-name="${U.esc(it.name)}">
+        <div class="mid">
+          <div class="pool-head"><span class="nm">${U.esc(it.name)}</span><span class="chip">${U.MK[poolMk]}</span></div>
+          <div class="cd">${U.esc(it.code)}</div>
+          <div class="pool-metrics">
+            <span>涨跌额 <b class="${U.cls(chg)}">${chg != null ? (chg > 0 ? '+' : '') + chg.toFixed(2) : '—'}</b></span>
+            <span>成交量 <b>${volTxt}</b></span>
+            <span>成本 <b>${hasCost ? U.fmt(cost) : '未设'}</b></span>
+            <span>持仓盈亏 <b class="${U.cls(pnl)}">${pnl != null ? U.pct(pnl) : '—'}</b></span>
+          </div>
+        </div>
+        <div class="pool-right">
+          <div class="px ${U.cls(pct)}">${price != null ? U.fmt(price) : '—'}</div>
+          <div class="dt ${U.cls(pct)}">${pct != null ? U.pct(pct) : '—'}</div>
+        </div>
         <button class="chip" data-act="more">⋯</button>
       </div>`;
       })
@@ -1393,7 +1422,7 @@
 
     view.innerHTML = `
       <h1 class="page-title">观察池 <span class="hint mono">${stampHtml()}</span></h1>
-      <div class="page-sub">本机浏览器保存 · 与自选池互相独立</div>
+      <div class="page-sub">共 ${total} 只 · 本机浏览器保存 · 与自选池互相独立</div>
       <div class="card section">
         <div class="section-head"><h3>加入标的</h3><span class="hint">代码 / 名称 / 拼音</span></div>
         <div class="seg segmented" id="poolMk">${seg}</div>
@@ -1462,7 +1491,7 @@
     openSheet(
       name || code,
       `<div class="section-head"><h3>${U.esc(code)}</h3><span class="hint">${U.MK[market]}</span></div>
-       <div class="form-row" style="margin-top:12px"><input class="input" id="pcCost" type="number" step="0.001" inputmode="decimal" placeholder="成本价，留空表示清除" value="${cost}"></div>
+       <div class="form-row" style="margin-top:12px"><input class="input" id="pcCost" type="number" step="any" min="0" inputmode="decimal" placeholder="成本价，留空表示清除" value="${cost}"></div>
        <button class="btn button primary block" id="pcSave">保存成本</button>
        <button class="btn button block" id="pcDel" style="margin-top:10px;color:var(--up-text)">移出观察池</button>
        <div class="hint" style="margin-top:10px">成本只保存在本机浏览器，用于计算浮动盈亏。</div>`,
@@ -1471,7 +1500,7 @@
           const raw = ($('#pcCost').value || '').trim();
           try {
             await API.poolCost({ market, code, cost: raw === '' ? null : Number(raw) });
-            toast(raw === '' ? '已清除成本' : '已保存成本');
+            toast(raw === '' ? '已清除成本价' : '已保存成本价：' + raw);
             closeSheet();
             renderPool();
           } catch (e) {
