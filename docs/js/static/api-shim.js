@@ -107,6 +107,24 @@
   }
   const saveWatchlist = () => lsSet(LS_KEY.watchlist, WL);
 
+  /* 观察池默认名单：个人持仓（只放代码+名称，成本/持仓量属隐私，不进公开仓库） */
+  const DEFAULT_POOL = {
+    A: [
+      { code: '300059', name: '东方财富' },
+      { code: '000563', name: '陕国投A' },
+      { code: '300622', name: '博士眼镜' },
+      { code: '603759', name: '海天股份' },
+      { code: '300210', name: '森远股份' },
+      { code: '513010', name: '恒生科技ETF易方达' },
+      { code: '159607', name: '中概互联网ETF嘉实' },
+    ],
+    HK: [],
+    US: [],
+    CR: [],
+    CNF: [],
+    USF: [],
+  };
+
   const emptyPool = () => ({ A: [], HK: [], US: [], CR: [], CNF: [], USF: [] });
 
   /* 旧版本可能把观察池存成扁平数组 [{market,code,name,cost}]，转成按市场分组 */
@@ -125,7 +143,7 @@
   function loadPool() {
     if (POOL) return POOL;
     const raw = lsGet(LS_KEY.pool, null);
-    if (!raw) { POOL = emptyPool(); return POOL; }
+    if (!raw) { POOL = normalizeWatchlist(DEFAULT_POOL); return POOL; }
     const src = Array.isArray(raw) ? poolFromFlatArray(raw) : raw;
     POOL = normalizeWatchlist(src);
     // 归一化会丢 cost 等扩展字段，按「归一化后的代码」从原始数据回填；
