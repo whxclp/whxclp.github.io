@@ -166,30 +166,40 @@
   }
   const savePool = () => lsSet(LS_KEY.pool, POOL);
 
-  /* 云端兜底：手机本地观察池为空时（清缓存/换机/无痕），自动从 chan-pools 快照拉回来 */
-  (function syncPoolFromCloud() {
+  /* 云端兜底：手机本地数据为空时（清缓存/换机/无痕模式），自动从 chan-pools 快照拉回来 */
+  (function syncFromCloud() {
     try {
-      if (lsGet(LS_KEY.pool, null)) return;
-      if (sessionStorage.getItem('chan-pool-cloud-check') === '2') return;
-      sessionStorage.setItem('chan-pool-cloud-check', '1');
+      const needPool = !lsGet(LS_KEY.pool, null);
+      const needWatch = !lsGet(LS_KEY.watchlist, null);
+      if (!needPool && !needWatch) return;
+      if (sessionStorage.getItem('chan-cloud-check') === '2') return;
+      sessionStorage.setItem('chan-cloud-check', '1');
       fetch('/chan-pools/data/latest.json?ts=' + Date.now(), { cache: 'no-store' })
         .then((r) => (r.ok ? r.json() : null))
         .then((j) => {
-          const p = j && j.pools && j.pools.pool;
-          const codes = p && Array.isArray(p.codes) ? p.codes : null;
-          if (!codes || !codes.length) {
-            sessionStorage.setItem('chan-pool-cloud-check', '2');
-            return;
+          const pools = (j && j.pools) || {};
+          const grab = (key) => {
+            const box = pools[key];
+            const codes = box && Array.isArray(box.codes) ? box.codes : null;
+            if (!codes || !codes.length) return null;
+            const out = emptyPool();
+            out.A = codes.map((x) => ({ code: String(x[0]), name: String(x[1] || x[0]) }));
+            return out;
+          };
+          let changed = false;
+          if (needPool) {
+            const p = grab('pool');
+            if (p) { lsSet(LS_KEY.pool, p); POOL = null; changed = true; }
           }
-          const next = emptyPool();
-          next.A = codes.map((x) => ({ code: String(x[0]), name: String(x[1] || x[0]) }));
-          lsSet(LS_KEY.pool, next);
-          POOL = null;
-          sessionStorage.setItem('chan-pool-cloud-check', '2');
-          location.replace(location.href);
+          if (needWatch) {
+            const w = grab('selfselect');
+            if (w) { lsSet(LS_KEY.watchlist, w); WL = null; changed = true; }
+          }
+          sessionStorage.setItem('chan-cloud-check', '2');
+          if (changed) location.replace(location.href);
         })
         .catch(() => {
-          sessionStorage.setItem('chan-pool-cloud-check', '2');
+          sessionStorage.setItem('chan-cloud-check', '2');
         });
     } catch (e) {}
   })();
