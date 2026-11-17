@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<title>数据备份 · 缠论工作台</title>
+<style>
+  :root{--bg:#0d1219;--card:#151d27;--line:#26303c;--tx:#e8eef6;--dim:#8b98a8;--ac:#4c9fff;--ok:#33c07f;--warn:#ffb648}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.6 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif;padding:18px 14px 40px}
+  h1{font-size:22px;margin:4px 0 6px}
+  .sub{color:var(--dim);font-size:13px;margin-bottom:18px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:14px}
+  .row{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px dashed rgba(255,255,255,.06);font-size:14px}
+  .row:last-child{border-bottom:0}
+  .row b{font-weight:600}
+  .ok{color:var(--ok)}.warn{color:var(--warn)}
+  button{width:100%;padding:13px;border-radius:11px;border:1px solid var(--line);background:#1d2837;color:var(--tx);font-size:15px;margin-top:10px;cursor:pointer}
+  button.primary{background:#1b3a5c;border-color:#2a5c8f;color:#dfeeff}
+  button.ghost{background:transparent}
+  textarea{width:100%;min-height:132px;background:#0f1620;color:var(--tx);border:1px solid var(--line);border-radius:10px;padding:10px;font:12px/1.5 ui-monospace,Consolas,monospace;margin-top:10px;resize:vertical}
+  .tip{color:var(--dim);font-size:12.5px;margin-top:8px}
+  h2{font-size:16px;margin:0 0 10px;color:#cfe0f5}
+  .msg{margin-top:10px;font-size:13.5px;min-height:20px}
+</style>
+</head>
+<body>
+  <h1>数据备份</h1>
+  <div class="sub">观察池、自选池、画线都存在这台手机的浏览器里。清缓存、换手机、无痕模式都会丢，这里把它拿出来存一份。</div>
+
+  <div class="card">
+    <h2>当前本机数据</h2>
+    <div class="row"><span>观察池</span><b id="n-pool">—</b></div>
+    <div class="row"><span>自选池</span><b id="n-watch">—</b></div>
+    <div class="row"><span>画线/标注</span><b id="n-draw">—</b></div>
+    <div class="tip" id="origin"></div>
+  </div>
+
+  <div class="card">
+    <h2>导出（存微信收藏 / 备忘录）</h2>
+    <button class="primary" id="btn-export">生成备份文本</button>
+    <button id="btn-copy">一键复制到剪贴板</button>
+    <textarea id="box" placeholder="点上面按钮生成备份文本，会出现在这里"></textarea>
+    <div class="tip">备份文本里含成本、持仓量，别发到群里或公开仓库，发给自己就行。</div>
+    <div class="msg" id="m1"></div>
+  </div>
+
+  <div class="card">
+    <h2>恢复（换手机 / 清缓存之后用）</h2>
+    <textarea id="inbox" placeholder="把之前备份的文本粘在这里，然后点恢复"></textarea>
+    <button class="primary" id="btn-restore">用这段备份恢复</button>
+    <div class="msg" id="m2"></div>
+  </div>
+
+  <div class="card">
+    <h2>更省心的做法</h2>
+    <div class="tip" style="font-size:13.5px;line-height:1.75">
+      · 电脑上的工作台（192.168.50.254:8931）才是主数据，手机这个静态版只是看板；<br>
+      · 只要每天发布一次四池快照，手机清空后会自动从云端把观察池拉回来；<br>
+      · 你在手机上手动加的那几只，属于本机数据，只有这份备份能带走。
+    </div>
+  </div>
+
+<script>
+(function () {
+  var K = { pool: 'chan-pool', watch: 'chan-watchlist', draw: 'chan-drawings' };
+  var $ = function (s) { return document.querySelector(s); };
+  function read(k) { try { var v = localStorage.getItem(k); return v ? JSON.parse(v) : null; } catch (e) { return null; } }
+  function write(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch (e) { return false; } }
+  function countPoolRaw(raw) {
+    if (!raw) return 0;
+    if (Array.isArray(raw)) return raw.length;
+    var n = 0;
+    Object.keys(raw).forEach(function (m) { if (Array.isArray(raw[m])) n += raw[m].length; });
+    return n;
+  }
+
+  function refresh() {
+    var p = read(K.pool), w = read(K.watch), d = read(K.draw);
+    $('#n-pool').textContent = countPoolRaw(p) + ' 只';
+    $('#n-watch').textContent = countPoolRaw(w) + ' 只';
+    $('#n-draw').textContent = (d ? Object.keys(d).length : 0) + ' 条';
+    $('#n-pool').className = countPoolRaw(p) ? 'ok' : 'warn';
+    $('#origin').textContent = '数据存在：' + location.origin;
+  }
+
+  function dump() {
+    return JSON.stringify({
+      v: 1,
+      at: new Date().toISOString(),
+      from: location.origin,
+      pool: read(K.pool),
+      watchlist: read(K.watch),
+      drawings: read(K.draw)
+    }, null, 2);
+  }
+
+  $('#btn-export').onclick = function () {
+    $('#box').value = dump();
+    $('#m1').textContent = '已生成，长度 ' + $('#box').value.length + ' 字';
+  };
+
+  $('#btn-copy').onclick = function () {
+    if (!$('#box').value) $('#box').value = dump();
+    var txt = $('#box').value;
+    var done = function () { $('#m1').textContent = '已复制，去微信收藏或备忘录粘贴保存'; };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(txt).then(done).catch(function () { fallback(); });
+    } else { fallback(); }
+    function fallback() {
+      var b = $('#box'); b.focus(); b.select();
+      try { document.execCommand('copy'); done(); } catch (e) { $('#m1').textContent = '自动复制失败，请长按文本框手动复制'; }
+    }
+  };
+
+  $('#btn-restore').onclick = function () {
+    var txt = $('#inbox').value.trim();
+    if (!txt) { $('#m2').textContent = '先把备份文本粘进来'; return; }
+    var o;
+    try { o = JSON.parse(txt); } catch (e) { $('#m2').textContent = '文本不是合法备份（解析失败）'; return; }
+    if (!o || (!o.pool && !o.watchlist && !o.drawings)) { $('#m2').textContent = '这段文本里没有可恢复的数据'; return; }
+    var n = 0;
+    if (o.pool && write(K.pool, o.pool)) n++;
+    if (o.watchlist && write(K.watch, o.watchlist)) n++;
+    if (o.drawings && write(K.draw, o.drawings)) n++;
+    if (!n) { $('#m2').textContent = '写入失败：可能存储空间已满'; return; }
+    $('#m2').className = 'msg ok';
+    $('#m2').textContent = '已恢复 ' + n + ' 项，正在重新打开…';
+    setTimeout(function () { location.replace('/m/'); }, 900);
+  };
+
+  refresh();
+})();
+</script>
+</body>
+</html>
