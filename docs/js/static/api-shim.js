@@ -166,6 +166,34 @@
   }
   const savePool = () => lsSet(LS_KEY.pool, POOL);
 
+  /* 云端兜底：手机本地观察池为空时（清缓存/换机/无痕），自动从 chan-pools 快照拉回来 */
+  (function syncPoolFromCloud() {
+    try {
+      if (lsGet(LS_KEY.pool, null)) return;
+      if (sessionStorage.getItem('chan-pool-cloud-check') === '2') return;
+      sessionStorage.setItem('chan-pool-cloud-check', '1');
+      fetch('/chan-pools/data/latest.json?ts=' + Date.now(), { cache: 'no-store' })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((j) => {
+          const p = j && j.pools && j.pools.pool;
+          const codes = p && Array.isArray(p.codes) ? p.codes : null;
+          if (!codes || !codes.length) {
+            sessionStorage.setItem('chan-pool-cloud-check', '2');
+            return;
+          }
+          const next = emptyPool();
+          next.A = codes.map((x) => ({ code: String(x[0]), name: String(x[1] || x[0]) }));
+          lsSet(LS_KEY.pool, next);
+          POOL = null;
+          sessionStorage.setItem('chan-pool-cloud-check', '2');
+          location.replace(location.href);
+        })
+        .catch(() => {
+          sessionStorage.setItem('chan-pool-cloud-check', '2');
+        });
+    } catch (e) {}
+  })();
+
   /* ---------------- 手绘线 ---------------- */
   let DRAWINGS = null;
   function loadDrawings() {
