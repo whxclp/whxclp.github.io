@@ -60,6 +60,11 @@
     poolAdd: (p) => post('/api/pool', p),
     poolDel: (p) => request('DELETE', '/api/pool', p),
     poolCost: (p) => post('/api/pool/cost', p),
+    // 自定义池：today-next = 今买明卖池（午盘选股 11:30）/ signals = 可操作池（可操作名单 17:00）
+    customPool: (name) => get('/api/custompool/' + name),
+    customAdd: (name, p) => post('/api/custompool/' + name, p),
+    customDel: (name, p) => request('DELETE', '/api/custompool/' + name, p),
+    customReset: (name) => request('POST', '/api/custompool/' + name, { reset: true }),
     drawings: (p) => get('/api/drawings', p),
     drawingsSave: (p) => post('/api/drawings', p),
     drawingsVerify: (p) => post('/api/drawings/verify', p),
