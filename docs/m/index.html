@@ -56,13 +56,13 @@
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="3.5" y="3.5" width="7" height="7" rx="1.8"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.8"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.8"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.8"/></svg>
     <span>总览</span>
   </button>
+  <button class="tab" data-tab="pools">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6.5h16"/><path d="M4 12h16"/><path d="M4 17.5h10"/></svg>
+    <span>四池</span>
+  </button>
   <button class="tab" data-tab="radar">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="8.2"/><circle cx="12" cy="12" r="2.4"/><path d="M12 3.8v2.6M12 17.6v2.6M3.8 12h2.6M17.6 12h2.6"/></svg>
     <span>雷达</span>
-  </button>
-  <button class="tab" data-tab="pool">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 6h16M4 11h16M4 16h9"/><circle cx="18.2" cy="17.8" r="2.6"/></svg>
-    <span>观察</span>
   </button>
   <button class="tab" data-tab="structure">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l5-6 3.5 3L16 7l5 5"/><path d="M3 20.5h18"/></svg>
@@ -90,5 +90,15 @@
 <script src="/js/chart.js?v=20261119v4"></script>
 <script src="/js/highlight.js?v=20261119v4"></script>
 <script src="/m/js/mobile.js?v=20261119v4"></script>
+
+<!-- 白屏兜底：8 秒还没启动就给出可见提示（独立版没有地址栏，白屏时无从下手） -->
+<div id="bootGuard" style="display:none;position:fixed;inset:0;z-index:9999;background:#0a0d13;color:#e6edf7;padding:30px 22px;font:15px/1.7 -apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+  <div style="font-size:21px;font-weight:700;margin-bottom:10px">页面没能启动</div>
+  <div style="color:#8b9bb0;font-size:13px;margin-bottom:20px">多半是浏览器或独立版缓存了旧文件，或者加载被中断。点下面的按钮清一次缓存再重开。</div>
+  <button id="bgFix" style="display:block;width:100%;padding:14px;border-radius:12px;border:1px solid #2b3a4d;background:#16283d;color:#fff;font-size:15px;margin-bottom:10px">清除缓存并重开</button>
+  <button id="bgReload" style="display:block;width:100%;padding:14px;border-radius:12px;border:1px solid #2b3a4d;background:#111823;color:#cfe0f5;font-size:15px;margin-bottom:10px">只重新加载</button>
+  <div id="bgInfo" style="color:#6f7f94;font-size:12px;margin-top:18px;word-break:break-all"></div>
+</div>
+<script src="/m/js/bootguard.js?v=20261119v4"></script>
 </body>
 </html>
