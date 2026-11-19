@@ -679,7 +679,8 @@
         <div id="pStatus" class="card"><div class="empty">读取中…</div></div>
       </div>
       <div class="section">
-        <div class="section-head"><h3>${U.esc(cur.name)}</h3><span class="hint" id="pCount">${U.esc(cur.desc)}</span></div>
+        <div class="section-head"><h3 style="flex:0 0 auto;white-space:nowrap">${U.esc(cur.name)}</h3></div>
+        <div class="hint" id="pCount" style="margin:-4px 0 8px;line-height:1.7">${U.esc(cur.desc)}</div>
         <div id="pList" class="list"><div class="empty">读取中…</div></div>
       </div>
       <div class="section">
