@@ -408,6 +408,74 @@
     return { asof: Date.now(), indices, watch, pulse };
   }
 
+  /* ---------------- 可操作池 / 今买明卖池（静态版：本地缓存 + 云端快照兜底） ---------------- */
+  const CUSTOM_DEF = {
+    signals: '可操作池',
+    'today-next': '今买明卖池',
+  };
+  const CUSTOM_KEY = (n) => 'chan-pool-' + n;
+
+  function normCustomItems(items) {
+    const num = (v) => (v === null || v === undefined || v === '' || !isFinite(Number(v))) ? null : Number(v);
+    const out = [];
+    for (const x of items || []) {
+      if (!x) continue;
+      const code = String(x.code || '').trim();
+      if (!code) continue;
+      out.push({
+        code: code,
+        name: String(x.name || code),
+        track: x.track ? String(x.track) : '',
+        rank: num(x.rank), score: num(x.score),
+        chg: num(x.chg), turn: num(x.turn),
+        zstatus: x.zstatus ? String(x.zstatus) : '',
+        date: x.date ? String(x.date) : '',
+        runAt: x.runAt ? String(x.runAt) : '',
+      });
+    }
+    return out;
+  }
+
+  function loadCustomRaw(name) {
+    const raw = lsGet(CUSTOM_KEY(name), null);
+    if (!raw) return { A: [], at: '' };
+    const list = Array.isArray(raw) ? raw : (raw.A || raw.list || raw.items || []);
+    return { A: normCustomItems(list), at: (raw && raw.at) || '' };
+  }
+
+  function saveCustom(name, obj) {
+    lsSet(CUSTOM_KEY(name), obj);
+  }
+
+  let __cloudOnce = null;
+  function syncCustomFromCloud() {
+    if (__cloudOnce) return __cloudOnce;
+    __cloudOnce = fetch('/chan-pools/data/latest.json?ts=' + Date.now(), { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        const pools = (j && j.pools) || {};
+        for (const name of Object.keys(CUSTOM_DEF)) {
+          const p = pools[name];
+          if (!p) continue;
+          const raw = (p.items && p.items.length)
+            ? p.items
+            : (p.codes || []).map((c) => ({ code: c[0], name: c[1] }));
+          const items = normCustomItems(raw);
+          if (!items.length) continue;
+          const first = items[0] || {};
+          const cloudAt = String(first.runAt || first.date || j.date || j.generatedAt || '');
+          const cur = loadCustomRaw(name);
+          // 云端比本地新才覆盖：避免冲掉手机上刚手加的条目
+          if (!cur.A.length || !cur.at || String(cur.at) <= cloudAt) {
+            saveCustom(name, { A: items, at: cloudAt });
+          }
+        }
+        return true;
+      })
+      .catch(() => true);
+    return __cloudOnce;
+  }
+
   /* ---------------- 路由 ---------------- */
   const routes = {
     '/api/health': async () => ({ ok: true, uptimeSec: Math.round(performance.now() / 1000), cache: { entries: 0 }, node: 'browser', assetVersion: 'static' }),
@@ -436,6 +504,16 @@
       };
     },
     '/api/watchlist': async () => ({ list: loadWatchlist(), defaults: WATCHLIST }),
+    '/api/custompool/signals': async () => {
+      await syncCustomFromCloud();
+      const r = loadCustomRaw('signals');
+      return { ok: true, list: { A: r.A }, at: r.at };
+    },
+    '/api/custompool/today-next': async () => {
+      await syncCustomFromCloud();
+      const r = loadCustomRaw('today-next');
+      return { ok: true, list: { A: r.A }, at: r.at };
+    },
     '/api/pool': async () => ({ list: loadPool() }),
     '/api/keys': async () => ({ providers: {}, envFile: '（静态模式）' }),
     '/api/sources': async () => ({ probedAt: Date.now(), sources: await S.probe() }),
@@ -692,6 +770,36 @@
 
     if (path === '/api/game/answer' && method === 'POST') {
       return await GAME.gradeLevel(K, { no: body.no, token: body.token, attemptId: body.attemptId, answer: body.answer });
+    }
+
+    if (path.indexOf('/api/custompool/') === 0) {
+      const name = path.slice('/api/custompool/'.length);
+      if (!CUSTOM_DEF[name]) throw new Error('未知池: ' + name);
+      const cur = loadCustomRaw(name);
+      if (method === 'POST') {
+        if (body.reset) {
+          saveCustom(name, { A: [], at: '' });
+          return { ok: true, list: { A: [] }, message: '已清空' };
+        }
+        if (body.items && typeof body.items === 'object') {
+          // 整批覆盖（列表接口契约与工作台一致）
+          const items = normCustomItems(Array.isArray(body.items) ? body.items : (body.items.A || []));
+          saveCustom(name, { A: items, at: body.at || new Date().toISOString().slice(0, 16).replace('T', ' ') });
+          return { ok: true, list: { A: items } };
+        }
+        const code = String(body.code || '').trim();
+        if (!code) throw new Error('缺少代码');
+        const idx = cur.A.findIndex((x) => x.code === code);
+        const rec = normCustomItems([{ ...body, code }])[0];
+        if (idx >= 0) cur.A[idx] = rec; else cur.A.push(rec);
+        saveCustom(name, cur);
+        return { ok: true, list: { A: cur.A } };
+      }
+      const code = String((body && body.code) || '').trim();
+      if (!code) throw new Error('缺少代码');
+      const left = cur.A.filter((x) => x.code !== code);
+      saveCustom(name, { A: left, at: cur.at });
+      return { ok: true, list: { A: left } };
     }
 
     if (path === '/api/daily') return V.daily();
