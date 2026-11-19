@@ -95,7 +95,7 @@
     const token = (state.renderToken = (state.renderToken || 0) + 1);
     state.tab = tab;
     U.$$('#tabbar .tab').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
-    $('#appTitle').textContent = { overview: '总览', pools: '三池', radar: '买卖点雷达', structure: '结构分析', theory: '缠论理论', divination: '算卦择时' }[tab];
+    $('#appTitle').textContent = { overview: '总览', pools: '四池', radar: '买卖点雷达', structure: '结构分析', theory: '缠论理论', divination: '算卦择时' }[tab];
     if (!(opts && opts.silent)) {
       const q = `?tab=${tab}${location.search.includes('skin=') ? '&skin=' + document.documentElement.dataset.skin : ''}#${tab}`;
       try { history.pushState({ tab }, '', q); } catch (e) { history.replaceState(null, '', q); }
@@ -512,7 +512,7 @@
     U.$$('#rList .list-item[data-c]').forEach((el) => el.addEventListener('click', () => openStructure(el.dataset.m, el.dataset.c)));
   }
 
-  /* ---------------- 三池（今买明卖池 / 可操作池 / 自选池） ----------------
+  /* ---------------- 四池（自选池 / 观察池 / 可操作池 / 今买明卖池） ----------------
      内容由本机定时任务写入：11:31 午盘选股 → 今买明卖池；16:31 透视主力 → 自选池；17:01 可操作名单 → 可操作池。
      任务运行状态读静态文件 /status/atp-status.json（由 course_pools.py 每次跑完写）。 */
   const POOL_TABS = [
