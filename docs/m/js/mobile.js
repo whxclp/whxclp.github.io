@@ -86,7 +86,7 @@
 
   /* ---------------- 路由 ---------------- */
   async function go(tab, opts) {
-    if (!['overview', 'radar', 'pool', 'structure', 'theory', 'divination'].includes(tab)) tab = 'overview';
+    if (!['overview', 'pools', 'radar', 'structure', 'theory', 'divination'].includes(tab)) tab = 'overview';
     if (state.tab === 'divination' && tab !== 'divination') {
       clearInterval(state.div && state.div.timer);
       if (state.div) { state.div.timer = null; state.div.live = false; }
@@ -95,7 +95,7 @@
     const token = (state.renderToken = (state.renderToken || 0) + 1);
     state.tab = tab;
     U.$$('#tabbar .tab').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
-    $('#appTitle').textContent = { overview: '总览', radar: '买卖点雷达', pool: '观察池', structure: '结构分析', theory: '缠论理论', divination: '算卦择时' }[tab];
+    $('#appTitle').textContent = { overview: '总览', pools: '三池', radar: '买卖点雷达', structure: '结构分析', theory: '缠论理论', divination: '算卦择时' }[tab];
     if (!(opts && opts.silent)) {
       const q = `?tab=${tab}${location.search.includes('skin=') ? '&skin=' + document.documentElement.dataset.skin : ''}#${tab}`;
       try { history.pushState({ tab }, '', q); } catch (e) { history.replaceState(null, '', q); }
@@ -105,8 +105,8 @@
     window.scrollTo(0, 0);
     try {
       if (tab === 'overview') await renderOverview();
+      else if (tab === 'pools') await renderPools();
       else if (tab === 'radar') await renderRadar();
-      else if (tab === 'pool') await renderPool();
       else if (tab === 'structure') await renderStructure();
       else if (tab === 'theory') renderTheory();
       else await renderDivination();
@@ -512,6 +512,255 @@
     U.$$('#rList .list-item[data-c]').forEach((el) => el.addEventListener('click', () => openStructure(el.dataset.m, el.dataset.c)));
   }
 
+  /* ---------------- 三池（今买明卖池 / 可操作池 / 自选池） ----------------
+     内容由本机定时任务写入：11:31 午盘选股 → 今买明卖池；16:31 透视主力 → 自选池；17:01 可操作名单 → 可操作池。
+     任务运行状态读静态文件 /status/atp-status.json（由 course_pools.py 每次跑完写）。 */
+  const POOL_TABS = [
+    { id: 'selfselect', name: '自选池', src: 'watch', desc: '透视主力 16:30' },
+    { id: 'pool', name: '观察池', src: 'pool', desc: '个人持仓' },
+    { id: 'signals', name: '可操作池', src: 'custom', desc: '可操作名单 17:00' },
+    { id: 'today-next', name: '今买明卖池', src: 'custom', desc: '午盘选股 11:30' },
+  ];
+  let poolTab = 'selfselect';
+  try {
+    const saved = localStorage.getItem('chan-m-pooltab');
+    if (POOL_TABS.some((t) => t.id === saved)) poolTab = saved;
+  } catch (e) {}
+
+  async function loadPoolList(t) {
+    if (t.src === 'watch') {
+      const r = await API.watchlist();
+      return r.list || {};
+    }
+    if (t.src === 'pool') {
+      const r = await API.pool();
+      return r.list || {};
+    }
+    const r = await API.customPool(t.id);
+    return r.list || {};
+  }
+
+  function poolStatusHtml(st) {
+    const runs = (st && st.runs) || {};
+    const rows = ['noon', 'zhuli', 'ops']
+      .filter((k) => runs[k])
+      .map((k) => {
+        const v = runs[k];
+        return `<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px dashed rgba(128,128,128,.18)">
+          <span style="flex:1">${U.esc(v.label)}</span>
+          <span style="min-width:38px;text-align:right;color:${v.ok ? 'var(--down-text)' : 'var(--up-text)'}">${v.ok ? '成功' : '失败'}</span>
+          <span class="hint" style="min-width:46px;text-align:right">${v.count} 只</span>
+          <span class="hint mono" style="min-width:66px;text-align:right">${U.esc(String(v.at || '').slice(5, 16))}</span>
+        </div>`;
+      });
+    if (!rows.length) return '<div class="empty">还没有运行记录 —— 工作日 11:31 / 16:31 / 17:01 自动跑</div>';
+    return rows.join('') +
+      `<div class="hint" style="padding-top:8px">状态文件更新于 ${U.esc(String((st && st.updatedAt) || '').slice(5, 19))}</div>`;
+  }
+
+  /* 可操作池：按课程名单表头展示（手机窄屏 → 上行 轨/排名/名称/代码，下行 涨跌%/换手%/主力状态/倾向分） */
+  function poolRowsSignalsHtml(list, quotes) {
+    let html = '';
+    const mkOrder = ['A', 'HK', 'US', 'CR', 'CNF', 'USF'];
+    for (const m of mkOrder) {
+      const arr = list[m] || [];
+      if (!arr.length) continue;
+      html += arr
+        .map((it) => {
+          const q = quotes && quotes[m + ':' + it.code] ? quotes[m + ':' + it.code] : {};
+          let chgN = it.chg != null && it.chg !== '' ? Number(it.chg) : null;
+          if ((chgN == null || !isFinite(chgN)) && q.pct != null) chgN = Number(q.pct);
+          const okChg = chgN != null && isFinite(chgN);
+          const chgTxt = okChg ? (chgN > 0 ? '+' : '') + chgN.toFixed(2) + '%' : '—';
+          const turnN = Number(it.turn);
+          const turnTxt = it.turn != null && it.turn !== '' && isFinite(turnN) ? turnN.toFixed(2) + '%' : '—';
+          const scoreN = Number(it.score);
+          const scoreTxt = it.score != null && it.score !== '' && isFinite(scoreN) ? scoreN.toFixed(1) : '—';
+          const track = String(it.track || '—');
+          const tStyle = track.indexOf('短线') >= 0 ? 'background:rgba(224,128,58,.16);color:#e0803a' : track.indexOf('中线') >= 0 ? 'background:rgba(74,155,214,.16);color:#4a9bd6' : '';
+          return `<div class="list-item" data-m="${m}" data-c="${U.esc(it.code)}" style="display:block">
+            <div style="display:flex;align-items:center;gap:8px">
+              <span class="chip" style="font-size:12px;padding:1px 6px;${tStyle}">${U.esc(track)}</span>
+              <span class="hint" style="font-size:12px">${it.rank != null && it.rank !== '' ? 'No.' + U.esc(String(it.rank)) : ''}</span>
+              <b class="nm" style="flex:1">${U.esc(it.name)}</b>
+              <span class="cd hint">${U.esc(it.code)}</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;margin-top:6px;font-size:12px">
+              <span class="${okChg ? U.cls(chgN) : 'hint'}" style="min-width:62px">${chgTxt}</span>
+              <span class="hint" style="min-width:66px">换手 ${turnTxt}</span>
+              <span class="hint" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${U.esc(it.zstatus || '')}">${U.esc(it.zstatus || '—')}</span>
+              <b style="min-width:40px;text-align:right" title="倾向分">${scoreTxt}</b>
+            </div>
+          </div>`;
+        })
+        .join('');
+    }
+    return html;
+  }
+
+  function poolRowsHtml(list, quotes) {
+    let html = '';
+    const mkOrder = ['A', 'HK', 'US', 'CR', 'CNF', 'USF'];
+    for (const m of mkOrder) {
+      const arr = list[m] || [];
+      if (!arr.length) continue;
+      html += arr
+        .map((it) => {
+          const q = quotes[m + ':' + it.code] || {};
+          return `<div class="list-item" data-m="${m}" data-c="${U.esc(it.code)}">
+            <div class="mid"><div class="nm">${U.esc(it.name)}</div><div class="cd">${U.MK[m] || m} · ${U.esc(it.code)}</div></div>
+            <div><div class="px ${U.cls(q.pct)}">${q.price != null ? U.fmt(q.price) : '—'}</div><div class="dt ${U.cls(q.pct)}">${q.pct != null ? U.pct(q.pct) : ''}</div></div>
+          </div>`;
+        })
+        .join('');
+    }
+    return html;
+  }
+
+  /* 四个池各自的更新时间：观察池/自选池看数据文件写入时间，另两池看跑批状态 */
+  function fmtWhen(ms) {
+    if (!ms) return '';
+    const d = new Date(Number(ms));
+    if (isNaN(d.getTime())) return '';
+    const now = new Date();
+    const sameDay = d.toDateString() === now.toDateString();
+    const hm = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+    if (sameDay) return hm;
+    return (d.getMonth() + 1) + '-' + d.getDate() + ' ' + hm;
+  }
+
+  function p2(n) {
+    return String(n).padStart(2, '0');
+  }
+
+  function todayStr() {
+    const d = new Date();
+    return d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate());
+  }
+
+  /* 跑批类池四种情况：今天成功 / 今天没选出票（未更新，不算失败）/ 有票但没写进去（失败）/ 今天没跑 */
+  function runWhen(r) {
+    if (!r || !r.at) return '今日未更新';
+    const at = String(r.at);
+    const day = String(r.date || at.slice(0, 10));
+    const hm = at.slice(11, 16);
+    if (day !== todayStr()) return '今日未更新 · 上次 ' + at.slice(5, 10) + ' ' + hm;
+    if (r.ok) return '更新于 ' + hm;
+    const msg = String(r.msg || '');
+    const noPick = (Number(r.count) || 0) === 0 && /为空|未写池|无符合|没有/.test(msg);
+    if (noPick) return '未更新 · 今日无新名单';
+    return '更新失败 ' + hm + '（名单未写）';
+  }
+
+  function whenOfTab(id, src, meta) {
+    if (!meta) return '';
+    if (src === 'pool') return meta.pool ? '手工维护 · 最后改动 ' + fmtWhen(meta.pool) : '手工维护';
+    if (src === 'watch') {
+      const z = (meta.runs || {}).zhuli;
+      if (z && z.at) return runWhen(z);
+      return meta.watchlist ? '手工维护 · 最后改动 ' + fmtWhen(meta.watchlist) : '';
+    }
+    return runWhen((meta.runs || {})[id === 'signals' ? 'ops' : 'noon']);
+  }
+
+  async function renderPools() {
+    if (stale('pools')) return;
+    const cur = POOL_TABS.filter((t) => t.id === poolTab)[0] || POOL_TABS[0];
+    view.innerHTML = `
+      <h1 class="page-title">四池 ${stampHtml()}</h1>
+      <div class="page-sub">定时任务自动写入 · 点任意标的看结构</div>
+      <div class="section">
+        <div class="seg segmented" id="pTab">
+          ${POOL_TABS.map((t) => `<button class="sq button${t.id === poolTab ? ' active' : ''}" data-k="${t.id}">${t.name}</button>`).join('')}
+        </div>
+      </div>
+      <div class="section">
+        <div class="section-head"><h3>任务运行</h3><button class="chip" id="pRefresh">刷新</button></div>
+        <div id="pStatus" class="card"><div class="empty">读取中…</div></div>
+      </div>
+      <div class="section">
+        <div class="section-head"><h3>${U.esc(cur.name)}</h3><span class="hint" id="pCount">${U.esc(cur.desc)}</span></div>
+        <div id="pList" class="list"><div class="empty">读取中…</div></div>
+      </div>
+      <div class="section">
+        <div class="hint" style="line-height:2">电脑关机或出门在外时，看云端只读快照：<br>
+          <a href="https://whxclp.github.io/chan-pools/" target="_blank" rel="noreferrer" style="color:var(--accent)">whxclp.github.io/chan-pools</a>
+          （每次任务跑完自动更新，含历史日期）
+        </div>
+      </div>`;
+
+    U.$$('#pTab .sq').forEach((b) =>
+      b.addEventListener('click', () => {
+        poolTab = b.dataset.k;
+        try { localStorage.setItem('chan-m-pooltab', poolTab); } catch (e) {}
+        haptic(6);
+        renderPools();
+      })
+    );
+    const rf = $('#pRefresh');
+    if (rf) rf.addEventListener('click', () => {
+      haptic(6);
+      renderPools();
+    });
+
+    // 任务运行状态
+    try {
+      const r = await fetch('/status/atp-status.json?t=' + Date.now(), { cache: 'no-store' });
+      const st = r.ok ? await r.json() : null;
+      const box = $('#pStatus');
+      if (box) box.innerHTML = poolStatusHtml(st);
+    } catch (e) {
+      const box = $('#pStatus');
+      if (box) box.innerHTML = '<div class="empty">状态读取失败（可能今天还没跑过）</div>';
+    }
+    if (stale('pools')) return;
+
+    // 本池更新时间（观察池/自选池看文件写入时间，可操作池/今买明卖池看跑批结果）
+    let whenPool = '';
+    try {
+      const meta = await API.get('/api/pool-meta');
+      whenPool = whenOfTab(cur.id, cur.src, meta || {});
+    } catch (e) {}
+    // 池内容 + 现价
+    let list = {};
+    try {
+      list = await loadPoolList(cur);
+    } catch (e) {
+      const box = $('#pList');
+      if (box) box.innerHTML = `<div class="empty">读取失败：${U.esc(e.message)}</div>`;
+      return;
+    }
+    const items = [];
+    ['A', 'HK', 'US', 'CR', 'CNF', 'USF'].forEach((m) => (list[m] || []).forEach((it) => items.push(m + ':' + it.code)));
+    let quotes = {};
+    if (items.length) {
+      try {
+        const q = await API.get('/api/quote', { list: items.join(',') });
+        (q.quotes || []).forEach((x) => { if (x && x.market && x.code) quotes[x.market + ':' + x.code] = x; });
+      } catch (e) {}
+    }
+    if (stale('pools')) return;
+    const total = items.length;
+    if ((cur.id === 'signals' || cur.id === 'today-next') && cur.src === 'custom') {
+      const dated = (list.A || []).concat(list.HK || []).find((x) => x && (x.date || x.runAt));
+      if (dated) {
+        const d = String(dated.date || dated.runAt).slice(0, 10);
+        const hm = dated.runAt ? ' ' + String(dated.runAt).slice(11, 16) + ' 生成' : '';
+        whenPool = '名单日期 ' + d + hm;
+      }
+    }
+    const cnt = $('#pCount');
+    if (cnt) cnt.textContent = `${total} 只 · ${cur.desc}` + (whenPool ? ' · ' + whenPool : '');
+    const box = $('#pList');
+    if (!box) return;
+    box.innerHTML = total
+      ? (cur.id === 'signals' ? poolRowsSignalsHtml(list, quotes) : poolRowsHtml(list, quotes))
+      : `<div class="empty">${cur.name}今天还没有内容 —— 任务跑完会自动填进来</div>`;
+    U.$$('#pList .list-item[data-c]').forEach((el) =>
+      el.addEventListener('click', () => openStructure(el.dataset.m, el.dataset.c))
+    );
+  }
+
   /* ---------------- 结构分析 ---------------- */
   function openStructure(market, code) {
     state.market = market;
@@ -520,28 +769,13 @@
     go('structure');
   }
 
-  /* 与电脑版一致：结构图上按观察池里该标的的成本价画成本线 */
-  async function applyPoolCost(market, code) {
-    if (!state.chart) return;
-    try {
-      const p = await API.pool();
-      const item = ((p.list && p.list[market]) || []).find((x) => poolNorm(x.code) === poolNorm(code));
-      state.chart.setCost(item && item.cost != null ? Number(item.cost) : null);
-    } catch (e) {
-      state.chart.setCost(null);
-    }
-  }
-
   async function renderStructure() {
     const market = state.market;
     const code = state.symbol[market];
     const periods = PERIODS[market];
     view.innerHTML = `
       <h1 class="page-title">结构分析 ${stampHtml()}</h1>
-      <div class="page-sub" style="display:flex;align-items:center;gap:8px">
-        <span>${U.MK[market]} · ${U.esc(code)} · ${PNAME[state.period]}</span>
-        <button class="chip" id="sPool" style="margin-left:auto">观察池</button>
-      </div>
+      <div class="page-sub">${U.MK[market]} · ${U.esc(code)} · ${PNAME[state.period]}</div>
       <div class="section">
         <div class="seg segmented" id="sMarket">
           ${['A', 'HK', 'US', 'CR', 'CNF', 'USF'].map((m) => `<button class="sq button ${m === market ? 'active' : ''}" data-m="${m}">${U.MK[m]}</button>`).join('')}
@@ -607,7 +841,6 @@
     );
     const ss = $('#sSearch');
     if (ss) ss.addEventListener('click', openSearch);
-    bindPoolToggle(market, code);
     U.$$('#sPeriod .sq').forEach((b) =>
       b.addEventListener('click', () => {
         state.period = b.dataset.p;
@@ -634,7 +867,6 @@
       state.lastChan = res;
       state.chart.setData(res);
       loadDrawings(); // 图表实例每次重建，必须重新载入，否则已有线会消失并被"1 条"覆盖保存
-      applyPoolCost(market, code);
       paintStructure(res);
       loadMobileBacktest(market, code, state.period);
     } catch (e) {
@@ -996,37 +1228,12 @@
   }
 
   /* ---------------- 弹层 ---------------- */
-  /* 软键盘弹出时 iOS 不改变布局视口，用 visualViewport 把弹层限制在可见区域内 */
-  function syncSheetViewport() {
-    const vv = window.visualViewport;
-    const top = vv ? Math.max(0, Math.round(vv.offsetTop)) : 0;
-    const kb = vv ? Math.max(0, Math.round((window.innerHeight || 0) - (vv.height + vv.offsetTop))) : 0;
-    const de = document.documentElement;
-    de.style.setProperty('--vv-top', top + 'px');
-    de.style.setProperty('--kb', kb + 'px');
-  }
-  if (window.visualViewport) {
-    window.visualViewport.addEventListener('resize', syncSheetViewport);
-    window.visualViewport.addEventListener('scroll', syncSheetViewport);
-  }
-  window.addEventListener('resize', syncSheetViewport);
-  window.addEventListener('orientationchange', syncSheetViewport);
-
-  function openSheet(title, html, after, opts) {
+  function openSheet(title, html, after) {
     const mask = $('#sheetMask');
     const sheet = $('#sheet');
     sheet.innerHTML = `<div class="sheet-head"><h3>${U.esc(title)}</h3><button class="sheet-close" id="sheetClose" aria-label="关闭"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>${html}`;
-    mask.classList.toggle('center', !!(opts && opts.center));
     mask.classList.add('show');
     document.documentElement.classList.add('sheet-open');
-    syncSheetViewport();
-    sheet.onfocusin = (e) => {
-      const t = e.target;
-      if (!t || !t.matches || !t.matches('input, textarea, select')) return;
-      setTimeout(() => {
-        try { t.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (err) {}
-      }, 280);
-    };
     const close = () => closeSheet();
     $('#sheetClose').addEventListener('click', close);
     mask.onclick = (e) => {
@@ -1035,12 +1242,8 @@
     if (after) after();
   }
   function closeSheet() {
-    const mask = $('#sheetMask');
-    mask.classList.remove('show');
-    mask.classList.remove('center');
+    $('#sheetMask').classList.remove('show');
     document.documentElement.classList.remove('sheet-open');
-    document.documentElement.style.setProperty('--vv-top', '0px');
-    document.documentElement.style.setProperty('--kb', '0px');
   }
 
   async function openSearch() {
@@ -1231,350 +1434,6 @@
     );
   }
 
-  /* ---------------- 观察池 ----------------
-   * 与桌面版同源：数据存在 localStorage 的 chan-pool，结构为 {市场:[{code,name,cost}]}，
-   * 与自选池（chan-watchlist）完全独立，同一浏览器下 PC 与手机版共用同一份观察池。
-   * 桌面版能力对齐：按市场分组、加入、移出、设置成本看浮动盈亏、点标的进结构分析。
-   * 桌面版没有排序和「批量看雷达」，这里也不额外添加。
-   */
-  const POOL_MK = ['A', 'HK', 'US', 'CR', 'CNF', 'USF'];
-  // 持仓盈亏金额的计价货币（持仓数量单位：股/份/张/币）
-  const POOL_CUR = { A: '¥', HK: 'HK$', US: '$', CR: 'USDT ', CNF: '¥', USF: '$' };
-  let poolMk = 'A';
-
-  /* 结构页的「观察」开关：加入/移出当前标的 */
-  const poolNorm = (s) => String(s || '').replace(/[^0-9A-Za-z]/g, '').toUpperCase();
-
-  /* 标的联想：代码前缀 / 中文名 / 拼音首字母（东财公开联想接口，JSONP + 本地缓存，避免每次输入都打请求） */
-  const SUG_URL = 'https://searchapi.eastmoney.com/api/suggest/get';
-  const SUG_TOKEN = 'D43BF722C8E33BDC906FB84D85E326E8';
-  const SUG_LS = 'chan-sug-cache';
-  let sugCache = null;
-  let sugSeq = 0;
-
-  function sugStore() {
-    if (!sugCache) {
-      try { sugCache = JSON.parse(localStorage.getItem(SUG_LS) || '{}') || {}; } catch (e) { sugCache = {}; }
-    }
-    return sugCache;
-  }
-  function sugSave() {
-    try {
-      const ks = Object.keys(sugCache);
-      if (ks.length > 240) ks.slice(0, ks.length - 240).forEach((k) => delete sugCache[k]);
-      localStorage.setItem(SUG_LS, JSON.stringify(sugCache));
-    } catch (e) {}
-  }
-  function suggest(q) {
-    const key = q.toLowerCase();
-    const cache = sugStore();
-    if (cache[key]) return Promise.resolve(cache[key]);
-    return new Promise((resolve) => {
-      const cb = '__sug' + Math.random().toString(36).slice(2, 9);
-      const s = document.createElement('script');
-      let done = false;
-      let timer = null;
-      const finish = (rows) => {
-        if (done) return;
-        done = true;
-        clearTimeout(timer);
-        try { delete window[cb]; } catch (e) {}
-        if (s.parentNode) s.parentNode.removeChild(s);
-        if (rows.length) { cache[key] = rows; sugSave(); }
-        resolve(rows);
-      };
-      timer = setTimeout(() => finish([]), 6000);
-      window[cb] = (data) => {
-        const d = ((data || {}).QuotationCodeTable || {}).Data || [];
-        const rows = d
-          .slice(0, 15)
-          .map((it) => {
-            const code = String(it.Code || '');
-            const pre = String(it.QuoteID || '').split('.')[0];
-            const cls = String(it.Classify || '');
-            let market = { AStock: 'A', BJStock: 'A', HK: 'HK', UsStock: 'US' }[cls] || '';
-            if (!market) {
-              if (/FUND|BOND|WARRANT/i.test(cls)) market = '';
-              else if (/^\d{6}$/.test(code)) market = 'A';
-              else if (pre === '116') market = 'HK';
-              else if (/^1(05|06|07)$/.test(pre)) market = 'US';
-            }
-            return { market, code, name: String(it.Name || '').trim() };
-          })
-          .filter((x) => x.code && x.name && POOL_MK.includes(x.market))
-          .slice(0, 12);
-        finish(rows);
-      };
-      s.onerror = () => finish([]);
-      s.src = SUG_URL + '?input=' + encodeURIComponent(q) + '&type=14&count=20&token=' + SUG_TOKEN + '&cb=' + cb + '&_=' + Date.now();
-      document.head.appendChild(s);
-    });
-  }
-
-  /* 输入框 + 候选列表（防抖、忽略中文输入法拼写中的中间态、点选即回调） */
-  function bindSuggest(input, box, onPick) {
-    if (!input || !box) return;
-    let composing = false;
-    let timer = null;
-    const hide = () => { box.hidden = true; box.innerHTML = ''; };
-    input.addEventListener('compositionstart', () => { composing = true; });
-    input.addEventListener('compositionend', () => { composing = false; schedule(); });
-    input.addEventListener('blur', () => setTimeout(hide, 200));
-    input.addEventListener('input', schedule);
-    function schedule() {
-      if (composing) return;
-      clearTimeout(timer);
-      timer = setTimeout(run, 240);
-    }
-    async function run() {
-      const q = (input.value || '').trim();
-      if (!q) return hide();
-      const seq = ++sugSeq;
-      const rows = await suggest(q);
-      if (seq !== sugSeq || (input.value || '').trim() !== q) return;
-      if (!rows.length) return hide();
-      box.innerHTML = rows
-        .map(
-          (r) =>
-            `<div class="sug-item" data-m="${r.market}" data-c="${U.esc(r.code)}" data-n="${U.esc(r.name)}">
-              <span class="chip">${U.MK[r.market] || r.market}</span>
-              <span class="nm" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${U.esc(r.name)}</span>
-              <span class="cd">${U.esc(r.code)}</span>
-            </div>`
-        )
-        .join('');
-      box.hidden = false;
-      U.$$('.sug-item', box).forEach((el) =>
-        el.addEventListener('pointerdown', (ev) => {
-          ev.preventDefault();
-          hide();
-          input.blur();
-          onPick({ market: el.dataset.m, code: el.dataset.c, name: el.dataset.n });
-        })
-      );
-    }
-  }
-
-  async function addToPool(it) {
-    try {
-      const r = await API.poolAdd({ market: it.market, code: it.code, name: it.name });
-      poolMk = it.market;
-      toast('已加入观察池：' + ((r.added && r.added.name) || it.name || it.code));
-      return true;
-    } catch (e) {
-      toast(e.message);
-      return false;
-    }
-  }
-
-  async function bindPoolToggle(market, code) {
-    const btn = $('#sPool');
-    if (!btn) return;
-    const sync = async () => {
-      try {
-        const data = (await API.pool()).list || {};
-        const has = (data[market] || []).some((x) => poolNorm(x.code) === poolNorm(code));
-        btn.dataset.has = has ? '1' : '0';
-        btn.classList.toggle('gold', has);
-        btn.textContent = has ? '★ 已观察' : '＋ 观察';
-      } catch (e) {}
-    };
-    btn.addEventListener('click', async () => {
-      const has = btn.dataset.has === '1';
-      btn.disabled = true;
-      try {
-        if (has) {
-          await API.poolDel({ market, code });
-          toast('已移出观察池');
-        } else {
-          const r = await API.poolAdd({ market, code });
-          poolMk = market;
-          toast('已加入观察池：' + ((r.added && r.added.name) || code));
-        }
-      } catch (e) {
-        toast(e.message);
-      } finally {
-        btn.disabled = false;
-        sync();
-      }
-    });
-    sync();
-  }
-
-  async function renderPool() {
-    const data = (await API.pool()).list || {};
-    const qmap = {};
-    const all = [];
-    POOL_MK.forEach((m) => (data[m] || []).forEach((it) => all.push({ market: m, ...it })));
-    if (all.length) {
-      try {
-        const r = await API.get('/api/quote', { list: all.map((i) => i.market + ':' + i.code).join(',') });
-        (r.quotes || []).forEach((q) => (qmap[q.market + ':' + q.code] = q));
-      } catch (e) {}
-    }
-    if (stale('pool')) return;
-
-    const total = POOL_MK.reduce((n, m) => n + (data[m] || []).length, 0);
-    const mkOpts = POOL_MK.map((m) => `<option value="${m}"${m === poolMk ? ' selected' : ''}>${U.MK[m]}</option>`).join('');
-
-    const rowHtml = (m, it) => {
-      const q = qmap[m + ':' + it.code] || {};
-      const price = q.price != null && Number(q.price) > 0 ? Number(q.price) : null;
-      const cost = it.cost != null && isFinite(Number(it.cost)) ? Number(it.cost) : null;
-      const hasCost = cost != null && cost > 0;
-      const qty = it.qty != null && isFinite(Number(it.qty)) && Number(it.qty) > 0 ? Number(it.qty) : null;
-      const pnl = hasCost && price != null ? ((price - cost) / cost) * 100 : null;
-      // 持仓盈亏金额 =（现价 − 成本价）× 持仓数量；未填持仓时只显示百分比
-      const amt = hasCost && qty != null && price != null ? (price - cost) * qty : null;
-      const amtTxt = amt != null ? (amt < 0 ? '-' : '+') + POOL_CUR[m] + U.fmt(Math.abs(amt), 2) : '';
-      const pct = q.pct != null && isFinite(Number(q.pct)) ? Number(q.pct) : null;
-      const chg = q.change != null && isFinite(Number(q.change)) ? Number(q.change) : null;
-      const vol = q.volume != null && Number(q.volume) > 0 ? Number(q.volume) : null;
-      const volTxt = vol != null ? (vol >= 10000 ? (vol / 10000).toFixed(1) + '万手' : vol + '手') : '—';
-      return `<div class="list-item pool-row" data-m="${m}" data-c="${U.esc(it.code)}" data-name="${U.esc(it.name)}">
-        <div class="mid">
-          <div class="pool-head"><span class="nm">${U.esc(it.name)}</span><span class="chip">${U.MK[m]}</span></div>
-          <div class="cd">${U.esc(it.code)}</div>
-          <div class="pool-metrics">
-            <span>涨跌额 <b class="${U.cls(chg)}">${chg != null ? (chg > 0 ? '+' : '') + chg.toFixed(2) : '—'}</b></span>
-            <span>成交量 <b>${volTxt}</b></span>
-            <span>成本 <b>${hasCost ? U.fmt(cost) : '未设'}</b></span>
-            <span>持仓 <b>${qty != null ? U.fmt(qty, 0) : '未设'}</b></span>
-            <span>持仓盈亏 <b class="${U.cls(pnl)}">${pnl != null ? U.pct(pnl) : '—'}</b></span>
-          </div>
-        </div>
-        <div class="pool-right">
-          <div class="px ${U.cls(pct)}">${price != null ? U.fmt(price) : '—'}</div>
-          <div class="dt ${U.cls(pct)}">${pct != null ? U.pct(pct) : '—'}</div>
-          ${amt != null ? `<div class="dt ${U.cls(amt)}">${amtTxt}</div>` : ''}
-        </div>
-        <button class="chip" data-act="more">⋯</button>
-      </div>`;
-    };
-
-    // 与电脑版一致：不分页签，按市场分组连续列出
-    const groups = POOL_MK.filter((m) => (data[m] || []).length)
-      .map(
-        (m) => `<div class="pool-group"><span>${U.MK[m]}</span><em>${data[m].length}</em></div>
-        <div class="list">${data[m].map((it) => rowHtml(m, it)).join('')}</div>`
-      )
-      .join('');
-
-    view.innerHTML = `
-      <h1 class="page-title">观察池 <span class="hint mono">${stampHtml()}</span></h1>
-      <div class="page-sub">共 ${total} 只 · 本机浏览器保存 · 与自选池互相独立</div>
-      <div class="card section">
-        <div class="section-head"><h3>加入标的</h3><span class="hint">代码 / 名称 / 拼音</span></div>
-        <div class="form-row" style="margin-top:10px;display:flex;gap:8px;align-items:center">
-          <select class="input pool-mk-sel" id="poolMkSel" aria-label="选择市场">${mkOpts}</select>
-          <div style="flex:1;min-width:0;position:relative">
-            <input class="input" id="poolCode" placeholder="600519 / 茅台 / gzmt" autocomplete="off" autocorrect="off" spellcheck="false">
-            <div class="sug-list" id="poolSug" hidden></div>
-          </div>
-        </div>
-        <button class="btn button primary block" id="poolAdd">加入观察池</button>
-        <div class="hint" style="margin-top:8px">支持代码前缀、中文名、拼音首字母；点候选直接加入。观察池与自选池互不影响。</div>
-      </div>
-      <div class="section">
-        <div class="section-head"><h3>观察池 · ${total} 个</h3><button class="chip" id="poolRefresh">刷新</button></div>
-        <div id="poolList">${groups || '<div class="empty">观察池还是空的 —— 在上方搜索并添加你的第一批标的</div>'}</div>
-      </div>
-      <div class="hint" style="text-align:center;padding:6px 0 20px">点标的进入结构分析 · 点 ⋯ 设置成本或移出</div>`;
-
-    const mkSel = $('#poolMkSel');
-    if (mkSel) mkSel.addEventListener('change', () => { poolMk = mkSel.value; });
-
-    const btn = $('#poolAdd');
-    const inp = $('#poolCode');
-    if (btn) {
-      btn.addEventListener('click', async () => {
-        const code = (inp.value || '').trim();
-        if (!code) return toast('请输入代码、名称或拼音首字母');
-        btn.disabled = true;
-        const ok = await addToPool({ market: poolMk, code });
-        btn.disabled = false;
-        if (ok) { inp.value = ''; renderPool(); }
-      });
-    }
-    if (inp) inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') btn.click(); });
-    bindSuggest(inp, $('#poolSug'), async (it) => {
-      const ok = await addToPool(it);
-      if (ok) { inp.value = ''; renderPool(); }
-    });
-
-    const rf = $('#poolRefresh');
-    if (rf) rf.addEventListener('click', () => renderPool());
-
-    U.$$('#poolList .list-item[data-c]').forEach((row) => {
-      row.addEventListener('click', (e) => {
-        if (e.target.closest('[data-act]')) return;
-        openStructure(row.dataset.m, row.dataset.c);
-      });
-      const more = row.querySelector('[data-act="more"]');
-      if (more)
-        more.addEventListener('click', (e) => {
-          e.stopPropagation();
-          openPoolItem(row.dataset.m, row.dataset.c, row.dataset.name);
-        });
-    });
-  }
-
-  async function openPoolItem(market, code, name) {
-    let cost = '';
-    let qty = '';
-    try {
-      const data = (await API.pool()).list || {};
-      const it = (data[market] || []).find((x) => poolNorm(x.code) === poolNorm(code));
-      if (it && it.cost != null) cost = it.cost;
-      if (it && it.qty != null) qty = it.qty;
-    } catch (e) {}
-    openSheet(
-      name || code,
-      `<div class="section-head"><h3>${U.esc(code)}</h3><span class="hint">${U.MK[market]}</span></div>
-       <div class="form-row" style="margin-top:12px">
-         <div class="hint" style="margin-bottom:4px">成本价（${POOL_CUR[market].trim()}）</div>
-         <input class="input" id="pcCost" type="number" step="any" min="0" inputmode="decimal" placeholder="留空表示清除" value="${cost}">
-       </div>
-       <div class="form-row">
-         <div class="hint" style="margin-bottom:4px">持仓数量（股/份/张/币）</div>
-         <input class="input" id="pcQty" type="number" step="any" min="0" inputmode="decimal" placeholder="留空只算盈亏百分比" value="${qty}">
-       </div>
-       <button class="btn button primary block" id="pcSave">保存</button>
-       <button class="btn button block" id="pcDel" style="margin-top:10px;color:var(--up-text)">移出观察池</button>
-       <div class="hint" style="margin-top:10px">盈亏金额 =（现价 − 成本价）× 持仓数量，按该市场计价货币显示；成本与持仓只保存在本机浏览器。</div>`,
-      () => {
-        $('#pcSave').addEventListener('click', async () => {
-          const raw = ($('#pcCost').value || '').trim();
-          const rawQty = ($('#pcQty').value || '').trim();
-          try {
-            await API.poolCost({
-              market,
-              code,
-              cost: raw === '' ? null : Number(raw),
-              qty: rawQty === '' ? null : Number(rawQty),
-            });
-            toast(raw === '' && rawQty === '' ? '已清除成本与持仓' : '已保存成本与持仓');
-            closeSheet();
-            renderPool();
-          } catch (e) {
-            toast(e.message);
-          }
-        });
-        $('#pcDel').addEventListener('click', async () => {
-          try {
-            await API.poolDel({ market, code });
-            toast('已移出观察池');
-            closeSheet();
-            renderPool();
-          } catch (e) {
-            toast(e.message);
-          }
-        });
-      },
-      { center: true }
-    );
-  }
-
   /* ---------------- 实时 ---------------- */
   function setLive(on) {
     state.live = on;
@@ -1675,7 +1534,6 @@
           if (state.tab === 'overview') { const ov = await API.overview(); patchOverview(ov); await renderOverview(); }
           else if (state.tab === 'radar') await renderRadar();
           else if (state.tab === 'structure') await renderStructure();
-          else if (state.tab === 'pool') await renderPool();
           else if (state.tab === 'divination') await renderDivination();
           else renderTheory();
           toast('已刷新');
@@ -1700,11 +1558,6 @@
     if (mb) mb.addEventListener('click', openMore);
     const qp = new URLSearchParams(location.search);
     const t = qp.get('tab');
-    if (qp.get('m') && qp.get('c')) {
-      state.market = qp.get('m').toUpperCase();
-      state.symbol[state.market] = qp.get('c');
-    }
-    if (qp.get('p')) state.period = qp.get('p');
     if (qp.get('hl')) state.hl = qp.get('hl');
     if (state.live) setLive(true);
     go(t || 'overview', { silent: true });
@@ -1720,6 +1573,8 @@
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/m/sw.js?v=' + (window.__ASSET_V__ || 'dev'), { scope: '/m/' }).catch(() => {});
     }
+    // 告诉 index.html 的白屏兜底：启动成功，别再弹“页面没能启动”
+    try { window.__mBooted = true; } catch (e) {}
   }
   /* 安卓返回键 / iOS 手势返回：先关弹层，再回上一个 Tab，最后才退出 */
   window.addEventListener('popstate', (e) => {
